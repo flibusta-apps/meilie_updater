@@ -34,12 +34,18 @@ async def update_books(ctx) -> bool:
         count = await postgres_pool.fetchval("SELECT count(*) FROM books;")
 
         for offset in range(0, count, 4096):
-            rows = await postgres_pool.fetch(f"SELECT id, title, is_deleted FROM books ORDER BY id LIMIT 4096 OFFSET {offset}")
+            rows = await postgres_pool.fetch(
+                "SELECT id, title, is_deleted FROM books"
+                f" ORDER BY id LIMIT 4096 OFFSET {offset}"
+            )
 
             documents = [dict(row) for row in rows]
 
             await loop.run_in_executor(pool, index.add_documents, documents)
-    
+
+    index.update_searchable_attributes(["title"])
+    index.update_filterable_attributes(["is_deleted"])
+
     return True
 
 
@@ -55,12 +61,17 @@ async def update_authors(ctx) -> bool:
         count = await postgres_pool.fetchval("SELECT count(*) FROM authors;")
 
         for offset in range(0, count, 4096):
-            rows = await postgres_pool.fetch(f"SELECT id, first_name, last_name, middle_name FROM authors ORDER BY id LIMIT 4096 OFFSET {offset}")
+            rows = await postgres_pool.fetch(
+                "SELECT id, first_name, last_name, middle_name FROM authors"
+                f" ORDER BY id LIMIT 4096 OFFSET {offset}"
+            )
 
             documents = [dict(row) for row in rows]
 
             await loop.run_in_executor(pool, index.add_documents, documents)
-    
+
+    index.update_searchable_attributes(["first_name", "last_name", "middle_name"])
+
     return True
 
 
@@ -76,12 +87,16 @@ async def update_sequences(ctx) -> bool:
         count = await postgres_pool.fetchval("SELECT count(*) FROM sequences;")
 
         for offset in range(0, count, 4096):
-            rows = await postgres_pool.fetch(f"SELECT id, name FROM sequences ORDER BY id LIMIT 4096 OFFSET {offset}")
+            rows = await postgres_pool.fetch(
+                f"SELECT id, name FROM sequences ORDER BY id LIMIT 4096 OFFSET {offset}"
+            )
 
             documents = [dict(row) for row in rows]
 
             await loop.run_in_executor(pool, index.add_documents, documents)
-    
+
+    index.update_searchable_attributes(["name"])
+
     return True
 
 

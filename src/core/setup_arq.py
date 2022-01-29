@@ -1,9 +1,4 @@
-from app.services import (
-    update,
-    update_books,
-    update_authors,
-    update_sequences,
-)
+from app.services import update, update_books, update_authors, update_sequences
 from core.arq_pool import get_redis_settings, get_arq_pool
 
 

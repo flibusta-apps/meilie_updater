@@ -5,10 +5,7 @@ from arq.connections import ArqRedis
 from app.depends import check_token
 
 
-router = APIRouter(
-    prefix="/api/v1",
-    dependencies=[Depends(check_token)]
-)
+router = APIRouter(prefix="/api/v1", dependencies=[Depends(check_token)])
 
 
 @router.post("/update")
