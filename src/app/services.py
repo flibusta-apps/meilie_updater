@@ -31,12 +31,21 @@ async def update_books(ctx) -> bool:
     postgres_pool = await get_postgres_pool()
 
     with concurrent.futures.ThreadPoolExecutor() as pool:
-        count = await postgres_pool.fetchval("SELECT count(*) FROM books;")
+        count = await postgres_pool.fetchval(
+            "SELECT count(*) FROM books WHERE is_deleted = 'f';"
+        )
 
         for offset in range(0, count, 4096):
             rows = await postgres_pool.fetch(
-                "SELECT id, title, is_deleted FROM books"
-                f" ORDER BY id LIMIT 4096 OFFSET {offset}"
+                "SELECT id, title, lang, "
+                "  array(SELECT author FROM book_authors "
+                "        WHERE books.id = book_authors.book) as authors, "
+                "  array(SELECT author FROM translations "
+                "        WHERE books.id = translations.book) as translators, "
+                "  array(SELECT sequence FROM book_sequences "
+                "        WHERE books.id = book_sequences.book) as sequences "
+                "FROM books  "
+                f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
 
             documents = [dict(row) for row in rows]
@@ -44,7 +53,7 @@ async def update_books(ctx) -> bool:
             await loop.run_in_executor(pool, index.add_documents, documents)
 
     index.update_searchable_attributes(["title"])
-    index.update_filterable_attributes(["is_deleted"])
+    index.update_filterable_attributes(["lang", "authors", "translators", "sequences"])
 
     return True
 
@@ -62,8 +71,15 @@ async def update_authors(ctx) -> bool:
 
         for offset in range(0, count, 4096):
             rows = await postgres_pool.fetch(
-                "SELECT id, first_name, last_name, middle_name FROM authors"
-                f" ORDER BY id LIMIT 4096 OFFSET {offset}"
+                "SELECT id, first_name, last_name, middle_name, "
+                "  array("
+                "      SELECT DISTINCT lang FROM book_authors "
+                "      LEFT JOIN books ON book = books.id "
+                "      WHERE authors.id = book_authors.author "
+                "        AND books.is_deleted = 'f' "
+                "    ) as langs "
+                "FROM authors "
+                f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
 
             documents = [dict(row) for row in rows]
@@ -71,6 +87,7 @@ async def update_authors(ctx) -> bool:
             await loop.run_in_executor(pool, index.add_documents, documents)
 
     index.update_searchable_attributes(["first_name", "last_name", "middle_name"])
+    index.update_filterable_attributes(["langs"])
 
     return True
 
@@ -88,7 +105,15 @@ async def update_sequences(ctx) -> bool:
 
         for offset in range(0, count, 4096):
             rows = await postgres_pool.fetch(
-                f"SELECT id, name FROM sequences ORDER BY id LIMIT 4096 OFFSET {offset}"
+                "SELECT id, name, "
+                "  array("
+                "    SELECT DISTINCT lang FROM book_sequences "
+                "    LEFT JOIN books ON book = books.id "
+                "    WHERE sequences.id = book_sequences.sequence "
+                "      AND books.is_deleted = 'f' "
+                "  ) as langs "
+                "FROM sequences "
+                f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
 
             documents = [dict(row) for row in rows]
@@ -96,6 +121,7 @@ async def update_sequences(ctx) -> bool:
             await loop.run_in_executor(pool, index.add_documents, documents)
 
     index.update_searchable_attributes(["name"])
+    index.update_filterable_attributes(["langs"])
 
     return True
 

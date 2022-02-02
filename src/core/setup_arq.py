@@ -10,4 +10,5 @@ class WorkerSettings:
     functions = [update, update_books, update_authors, update_sequences]
     on_startup = startup
     redis_settings = get_redis_settings()
-    max_jobs = 2
+    max_jobs = 3
+    job_timeout = 15 * 60
