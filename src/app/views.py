@@ -8,6 +8,11 @@ from app.depends import check_token
 router = APIRouter(prefix="/api/v1", dependencies=[Depends(check_token)])
 
 
+@router.get("/healthcheck")
+async def healthcheck():
+    return "Ok!"
+
+
 @router.post("/update")
 async def update(request: Request):
     arq_pool: ArqRedis = request.app.state.arq_pool
