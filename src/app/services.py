@@ -22,6 +22,16 @@ async def get_postgres_pool() -> asyncpg.Pool:
     )
 
 
+DEFAULT_RANKING_RULES = [
+    "words",
+    "typo",
+    "proximity",
+    "attribute",
+    "sort",
+    "exactness",
+]
+
+
 async def update_books(ctx) -> bool:
     loop = asyncio.get_event_loop()
 
@@ -37,14 +47,7 @@ async def update_books(ctx) -> bool:
 
         for offset in range(0, count, 4096):
             rows = await postgres_pool.fetch(
-                "SELECT id, title, lang, "
-                "  array(SELECT author FROM book_authors "
-                "        WHERE books.id = book_authors.book) as authors, "
-                "  array(SELECT author FROM translations "
-                "        WHERE books.id = translations.book) as translators, "
-                "  array(SELECT sequence FROM book_sequences "
-                "        WHERE books.id = book_sequences.book) as sequences "
-                "FROM books  "
+                "SELECT id, title, lang FROM books "
                 f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
 
@@ -53,7 +56,7 @@ async def update_books(ctx) -> bool:
             await loop.run_in_executor(pool, index.add_documents, documents)
 
     index.update_searchable_attributes(["title"])
-    index.update_filterable_attributes(["lang", "authors", "translators", "sequences"])
+    index.update_filterable_attributes(["lang"])
 
     return True
 
@@ -77,7 +80,17 @@ async def update_authors(ctx) -> bool:
                 "      LEFT JOIN books ON book = books.id "
                 "      WHERE authors.id = book_authors.author "
                 "        AND books.is_deleted = 'f' "
-                "    ) as langs "
+                "    ) as author_langs, "
+                "  array("
+                "      SELECT DISTINCT lang FROM translations "
+                "      LEFT JOIN books ON book = books.id "
+                "      WHERE authors.id = translations.author "
+                "        AND books.is_deleted = 'f' "
+                "    ) as translator_langs, "
+                "  (SELECT count(books.id) FROM book_authors "
+                "    LEFT JOIN books ON book = books.id "
+                "    WHERE authors.id = book_authors.author "
+                "      AND books.is_deleted = 'f') as books_count "
                 "FROM authors "
                 f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
@@ -87,7 +100,8 @@ async def update_authors(ctx) -> bool:
             await loop.run_in_executor(pool, index.add_documents, documents)
 
     index.update_searchable_attributes(["first_name", "last_name", "middle_name"])
-    index.update_filterable_attributes(["langs"])
+    index.update_filterable_attributes(["author_langs", "translator_langs"])
+    index.update_ranking_rules([*DEFAULT_RANKING_RULES, "books_count:desc"])
 
     return True
 
@@ -111,7 +125,11 @@ async def update_sequences(ctx) -> bool:
                 "    LEFT JOIN books ON book = books.id "
                 "    WHERE sequences.id = book_sequences.sequence "
                 "      AND books.is_deleted = 'f' "
-                "  ) as langs "
+                "  ) as langs, "
+                "  (SELECT count(books.id) FROM book_sequences "
+                "   LEFT JOIN books ON book = books.id "
+                "   WHERE sequences.id = book_sequences.sequence "
+                "     AND books.is_deleted = 'f') as books_count "
                 "FROM sequences "
                 f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
@@ -122,6 +140,7 @@ async def update_sequences(ctx) -> bool:
 
     index.update_searchable_attributes(["name"])
     index.update_filterable_attributes(["langs"])
+    index.update_ranking_rules([*DEFAULT_RANKING_RULES, "books_count:desc"])
 
     return True
 
