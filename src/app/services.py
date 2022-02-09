@@ -47,7 +47,7 @@ async def update_books(ctx) -> bool:
 
         for offset in range(0, count, 4096):
             rows = await postgres_pool.fetch(
-                "SELECT id, title, lang FROM books "
+                "SELECT id, title, lang FROM books WHERE is_deleted = 'f' "
                 f"ORDER BY id LIMIT 4096 OFFSET {offset}"
             )
 
