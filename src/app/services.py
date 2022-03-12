@@ -145,7 +145,7 @@ async def update_sequences(ctx) -> bool:
     return True
 
 
-async def update(ctx) -> bool:
+async def update(ctx: dict, *args, **kwargs) -> bool:
     arq_pool: ArqRedis = ctx["arc_pool"]
 
     await arq_pool.enqueue_job("update_books")
