@@ -42,14 +42,16 @@ async def update_books(ctx) -> bool:
     index = meili.index("books")
 
     postgres = await get_postgres_connection()
-    cursor = await postgres.cursor(
-        "SELECT id, title, lang FROM books WHERE is_deleted = 'f';"
-    )
 
-    while rows := await cursor.fetch(1024):
-        await loop.run_in_executor(
-            thread_pool, index.add_documents, [dict(row) for row in rows]
+    async with postgres.transaction():
+        cursor = await postgres.cursor(
+            "SELECT id, title, lang FROM books WHERE is_deleted = 'f';"
         )
+
+        while rows := await cursor.fetch(1024):
+            await loop.run_in_executor(
+                thread_pool, index.add_documents, [dict(row) for row in rows]
+            )
 
     index.update_searchable_attributes(["title"])
     index.update_filterable_attributes(["lang"])
@@ -66,31 +68,33 @@ async def update_authors(ctx) -> bool:
     index = meili.index("authors")
 
     postgres = await get_postgres_connection()
-    cursor = await postgres.cursor(
-        "SELECT id, first_name, last_name, middle_name, "
-        "  array("
-        "      SELECT DISTINCT lang FROM book_authors "
-        "      LEFT JOIN books ON book = books.id "
-        "      WHERE authors.id = book_authors.author "
-        "        AND books.is_deleted = 'f' "
-        "    ) as author_langs, "
-        "  array("
-        "      SELECT DISTINCT lang FROM translations "
-        "      LEFT JOIN books ON book = books.id "
-        "      WHERE authors.id = translations.author "
-        "        AND books.is_deleted = 'f' "
-        "    ) as translator_langs, "
-        "  (SELECT count(books.id) FROM book_authors "
-        "    LEFT JOIN books ON book = books.id "
-        "    WHERE authors.id = book_authors.author "
-        "      AND books.is_deleted = 'f') as books_count "
-        "FROM authors;"
-    )
 
-    while rows := await cursor.fetch(1024):
-        await loop.run_in_executor(
-            thread_pool, index.add_documents, [dict(row) for row in rows]
+    async with postgres.transaction():
+        cursor = await postgres.cursor(
+            "SELECT id, first_name, last_name, middle_name, "
+            "  array("
+            "      SELECT DISTINCT lang FROM book_authors "
+            "      LEFT JOIN books ON book = books.id "
+            "      WHERE authors.id = book_authors.author "
+            "        AND books.is_deleted = 'f' "
+            "    ) as author_langs, "
+            "  array("
+            "      SELECT DISTINCT lang FROM translations "
+            "      LEFT JOIN books ON book = books.id "
+            "      WHERE authors.id = translations.author "
+            "        AND books.is_deleted = 'f' "
+            "    ) as translator_langs, "
+            "  (SELECT count(books.id) FROM book_authors "
+            "    LEFT JOIN books ON book = books.id "
+            "    WHERE authors.id = book_authors.author "
+            "      AND books.is_deleted = 'f') as books_count "
+            "FROM authors;"
         )
+
+        while rows := await cursor.fetch(1024):
+            await loop.run_in_executor(
+                thread_pool, index.add_documents, [dict(row) for row in rows]
+            )
 
     index.update_searchable_attributes(["first_name", "last_name", "middle_name"])
     index.update_filterable_attributes(["author_langs", "translator_langs"])
@@ -108,25 +112,27 @@ async def update_sequences(ctx) -> bool:
     index = meili.index("sequences")
 
     postgres = await get_postgres_connection()
-    cursor = await postgres.cursor(
-        "SELECT id, name, "
-        "  array("
-        "    SELECT DISTINCT lang FROM book_sequences "
-        "    LEFT JOIN books ON book = books.id "
-        "    WHERE sequences.id = book_sequences.sequence "
-        "      AND books.is_deleted = 'f' "
-        "  ) as langs, "
-        "  (SELECT count(books.id) FROM book_sequences "
-        "   LEFT JOIN books ON book = books.id "
-        "   WHERE sequences.id = book_sequences.sequence "
-        "     AND books.is_deleted = 'f') as books_count "
-        "FROM sequences;"
-    )
 
-    while rows := await cursor.fetch(1024):
-        await loop.run_in_executor(
-            thread_pool, index.add_documents, [dict(row) for row in rows]
+    async with postgres.transaction():
+        cursor = await postgres.cursor(
+            "SELECT id, name, "
+            "  array("
+            "    SELECT DISTINCT lang FROM book_sequences "
+            "    LEFT JOIN books ON book = books.id "
+            "    WHERE sequences.id = book_sequences.sequence "
+            "      AND books.is_deleted = 'f' "
+            "  ) as langs, "
+            "  (SELECT count(books.id) FROM book_sequences "
+            "   LEFT JOIN books ON book = books.id "
+            "   WHERE sequences.id = book_sequences.sequence "
+            "     AND books.is_deleted = 'f') as books_count "
+            "FROM sequences;"
         )
+
+        while rows := await cursor.fetch(1024):
+            await loop.run_in_executor(
+                thread_pool, index.add_documents, [dict(row) for row in rows]
+            )
 
     index.update_searchable_attributes(["name"])
     index.update_filterable_attributes(["langs"])
