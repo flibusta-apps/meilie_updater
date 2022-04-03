@@ -14,4 +14,4 @@ class WorkerSettings:
     redis_settings = get_redis_settings()
     max_jobs = 3
     job_timeout = 15 * 60
-    cron_jobs = [cron(update, hour={6}, minute=0)]
+    cron_jobs = [cron(update, hour={4}, minute=0)]
