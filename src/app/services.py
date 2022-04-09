@@ -143,11 +143,52 @@ async def update_sequences(ctx) -> bool:
     return True
 
 
+async def update_genres(ctx) -> bool:
+    loop = asyncio.get_event_loop()
+
+    meili = get_meilisearch_client()
+    index = meili.index("genres")
+
+    postgres = await get_postgres_connection()
+
+    async with postgres.transaction():
+        cursor = await postgres.cursor(
+            "SELECT id, description, meta, "
+            "    array( "
+            "        SELECT DISTINCT lang FROM book_genres "
+            "        LEFT JOIN books ON book = books.id "
+            "        WHERE genres.id = book_genres.genre "
+            "        AND books.is_deleted = 'f' "
+            "    ) as langs, "
+            "    ( "
+            "        SELECT count(*) FROM book_genres "
+            "        LEFT JOIN books ON book = books.id "
+            "        WHERE genres.id = book_genres.genre "
+            "        AND books.is_deleted = 'f' "
+            "    ) as books_count "
+            "FROM genres;"
+        )
+
+        while rows := await cursor.fetch(1024):
+            await loop.run_in_executor(
+                thread_pool, index.add_documents, [dict(row) for row in rows]
+            )
+
+    index.update_searchable_attributes(["description"])
+    index.update_filterable_attributes(["langs"])
+    index.update_ranking_rules([*DEFAULT_RANKING_RULES, "books_count:desc"])
+
+    await postgres.close()
+
+    return True
+
+
 async def update(ctx: dict, *args, **kwargs) -> bool:
     arq_pool: ArqRedis = ctx["arc_pool"]
 
     await arq_pool.enqueue_job("update_books")
     await arq_pool.enqueue_job("update_authors")
     await arq_pool.enqueue_job("update_sequences")
+    await arq_pool.enqueue_job("update_genres")
 
     return True
