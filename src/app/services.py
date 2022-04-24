@@ -35,7 +35,7 @@ DEFAULT_RANKING_RULES = [
 ]
 
 
-async def update_books(ctx) -> bool:
+async def update_books(ctx) -> bool:  # NOSONAR
     loop = asyncio.get_event_loop()
 
     meili = get_meilisearch_client()
@@ -61,7 +61,7 @@ async def update_books(ctx) -> bool:
     return True
 
 
-async def update_authors(ctx) -> bool:
+async def update_authors(ctx) -> bool:  # NOSONAR
     loop = asyncio.get_event_loop()
 
     meili = get_meilisearch_client()
@@ -98,14 +98,14 @@ async def update_authors(ctx) -> bool:
 
     index.update_searchable_attributes(["first_name", "last_name", "middle_name"])
     index.update_filterable_attributes(["author_langs", "translator_langs"])
-    index.update_ranking_rules([*DEFAULT_RANKING_RULES, "books_count:desc"])
+    index.update_ranking_rules([*DEFAULT_RANKING_RULES, "books_count:desc"])  # NOSONAR
 
     await postgres.close()
 
     return True
 
 
-async def update_sequences(ctx) -> bool:
+async def update_sequences(ctx) -> bool:  # NOSONAR
     loop = asyncio.get_event_loop()
 
     meili = get_meilisearch_client()
@@ -143,7 +143,7 @@ async def update_sequences(ctx) -> bool:
     return True
 
 
-async def update_genres(ctx) -> bool:
+async def update_genres(ctx) -> bool:  # NOSONAR
     loop = asyncio.get_event_loop()
 
     meili = get_meilisearch_client()
@@ -183,7 +183,7 @@ async def update_genres(ctx) -> bool:
     return True
 
 
-async def update(ctx: dict, *args, **kwargs) -> bool:
+async def update(ctx: dict, *args, **kwargs) -> bool:  # NOSONAR
     arq_pool: ArqRedis = ctx["arc_pool"]
 
     await arq_pool.enqueue_job("update_books")

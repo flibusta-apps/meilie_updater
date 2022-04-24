@@ -8,6 +8,7 @@ from app.services import (
     update_genres,
 )
 from core.arq_pool import get_redis_settings, get_arq_pool
+import core.sentry  # noqa: F401
 
 
 async def startup(ctx):
