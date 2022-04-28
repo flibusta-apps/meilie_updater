@@ -1,5 +1,3 @@
-from arq.cron import cron
-
 from app.services import (
     update,
     update_books,
@@ -21,4 +19,3 @@ class WorkerSettings:
     redis_settings = get_redis_settings()
     max_jobs = 2
     job_timeout = 15 * 60
-    cron_jobs = [cron(update, hour={4}, minute=0)]
