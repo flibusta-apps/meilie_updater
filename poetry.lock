@@ -248,8 +248,8 @@ python-versions = ">=3.5"
 
 [[package]]
 name = "meilisearch"
-version = "0.18.0"
-description = "The python client for MeiliSearch API."
+version = "0.19.1"
+description = "The python client for Meilisearch API."
 category = "main"
 optional = false
 python-versions = ">=3"
@@ -487,7 +487,7 @@ testing = ["coverage (>=4)", "coverage-enable-subprocess (>=1)", "flaky (>=3)", 
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.9"
-content-hash = "d18e6cd16d3ca831ef9327d347d2812e94ed65721a243ca5eceaea780e5d4b7a"
+content-hash = "5b8fb5dfbcb1ad01f1914bec939a62f84b2261f016b733a5dc39f29562a5589e"
 
 [metadata.files]
 aioredis = [
@@ -637,10 +637,7 @@ idna = [
     {file = "idna-3.3-py3-none-any.whl", hash = "sha256:84d9dd047ffa80596e0f246e2eab0b391788b0503584e8945f2368256d2735ff"},
     {file = "idna-3.3.tar.gz", hash = "sha256:9d643ff0a55b762d5cdb124b8eaa99c66322e2157b69160bc32796e824360e6d"},
 ]
-meilisearch = [
-    {file = "meilisearch-0.18.0-py3-none-any.whl", hash = "sha256:b3f327cd01d851d3128bac6949f85a0b0c1476229b0e5d711dd76346da1f0fe2"},
-    {file = "meilisearch-0.18.0.tar.gz", hash = "sha256:f697a48845f693b07c63c3462312b209b8c03ba0572da9644c6777849589d18d"},
-]
+meilisearch = []
 nodeenv = [
     {file = "nodeenv-1.6.0-py2.py3-none-any.whl", hash = "sha256:621e6b7076565ddcacd2db0294c0381e01fd28945ab36bcf00f41c5daf63bef7"},
     {file = "nodeenv-1.6.0.tar.gz", hash = "sha256:3ef13ff90291ba2a4a7a4ff9a979b63ffdd00a464dbe04acf0ea6471517a4c2b"},

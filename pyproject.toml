@@ -8,7 +8,7 @@ authors = ["Kurbanov Bulat <kurbanovbul@gmail.com>"]
 python = "^3.9"
 fastapi = ">=0.71.0"
 arq = "^0.22"
-meilisearch = "^0.18.0"
+meilisearch = "^0.19.1"
 asyncpg = "^0.25.0"
 uvicorn = {extras = ["standart"], version = "^0.17.1"}
 httpx = ">=0.23.0"
