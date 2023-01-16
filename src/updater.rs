@@ -63,7 +63,7 @@ where
             })
             .collect();
 
-        if let Err(err) = index.add_documents(&items, Some("id")).await {
+        if let Err(err) = index.add_or_replace(&items, Some("id")).await {
             return Err(Box::new(err));
         };
     }

@@ -63,7 +63,7 @@ pub struct Author {
     pub middle_name: String,
     pub author_langs: Vec<String>,
     pub translator_langs: Vec<String>,
-    pub books_count: i32,
+    pub books_count: i64,
 }
 
 impl UpdateModel for Author {
@@ -140,7 +140,7 @@ pub struct Sequence {
     pub id: i32,
     pub name: String,
     pub langs: Vec<String>,
-    pub books_count: i32
+    pub books_count: i64
 }
 
 impl UpdateModel for Sequence {
@@ -201,8 +201,8 @@ pub struct Genre {
     pub id: i32,
     pub description: String,
     pub meta: String,
-    pub langs: String,
-    pub books_count: String,
+    pub langs: Vec<String>,
+    pub books_count: i64,
 }
 
 impl UpdateModel for Genre {
