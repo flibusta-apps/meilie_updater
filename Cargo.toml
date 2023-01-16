@@ -1,0 +1,19 @@
+[package]
+name = "meili_updater"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.21.1", features = ["full"] }
+axum = "0.5.16"
+sentry = "0.27.0"
+lazy_static = "1.4.0"
+log = "0.4"
+env_logger = "0.9.0"
+tokio-postgres = { version = "0.7.6", features = ["with-chrono-0_4"] }
+deadpool-postgres = "0.10.2"
+meilisearch-sdk = "0.21.2"
+futures = "0.3"
+serde = { version = "1.0.144", features = ["derive"] }

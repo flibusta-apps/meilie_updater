@@ -1,25 +1,21 @@
-FROM ghcr.io/flibusta-apps/base_docker_images:3.11-postgres-asyncpg-poetry-buildtime as build-image
+FROM rust:bullseye AS builder
 
-WORKDIR /root/poetry
-COPY pyproject.toml poetry.lock /root/poetry/
+WORKDIR /app
 
-ENV VENV_PATH=/opt/venv
-RUN poetry export --without-hashes > requirements.txt \
-    && . "${VENV_PATH}/bin/activate" \
-    && pip install -r requirements.txt --no-cache-dir
+COPY . .
+
+RUN cargo build --release --bin meili_updater
 
 
-FROM ghcr.io/flibusta-apps/base_docker_images:3.11-postgres-runtime as runtime-image
+FROM debian:bullseye-slim
 
-ENV VENV_PATH=/opt/venv
-ENV PATH="$VENV_PATH/bin:$PATH"
+RUN apt-get update \
+    && apt-get install -y openssl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app/
+RUN update-ca-certificates
 
-COPY --from=build-image $VENV_PATH $VENV_PATH
-COPY ./src/ /app/
-COPY ./scripts/healthcheck.py /root/healthcheck.py
+WORKDIR /app
 
-EXPOSE 8080
-
-CMD gunicorn -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:8080
+COPY --from=builder /app/target/release/meili_updater /usr/local/bin
+ENTRYPOINT ["/usr/local/bin/meili_updater"]
