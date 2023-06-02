@@ -26,7 +26,7 @@ async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
 }
 
 fn get_meili_client() -> Client {
-    Client::new(config::CONFIG.meili_host.clone(), config::CONFIG.meili_master_key.clone())
+    Client::new(config::CONFIG.meili_host.clone(), Some(config::CONFIG.meili_master_key.clone()))
 }
 
 async fn update_model<T>(
