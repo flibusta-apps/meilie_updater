@@ -55,9 +55,9 @@ where
     while let Some(chunk) = chunks.next().await {
         let items: Vec<T> = chunk
             .into_iter()
-            .filter_map(|result| {
+            .map(|result| {
                 match result {
-                    Ok(v) => Some(T::from_row(v)),
+                    Ok(v) => T::from_row(v),
                     Err(err) => panic!("{}", err),
                 }
             })
