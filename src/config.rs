@@ -1,7 +1,7 @@
 pub struct Config {
     pub api_key: String,
 
-    pub sentry_sdn: String,
+    pub sentry_dsn: String,
 
     pub postgres_db_name: String,
     pub postgres_host: String,
@@ -22,7 +22,7 @@ impl Config {
         Config {
             api_key: get_env("API_KEY"),
 
-            sentry_sdn: get_env("SENTRY_SDN"),
+            sentry_dsn: get_env("SENTRY_DSN"),
 
             postgres_db_name: get_env("POSTGRES_DB_NAME"),
             postgres_host: get_env("POSTGRES_HOST"),

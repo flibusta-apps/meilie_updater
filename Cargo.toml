@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.28.2", features = ["full"] }
 axum = "0.6.18"
-sentry = "0.31.3"
+sentry = { version = "0.31.3", features = ["debug-images"] }
 lazy_static = "1.4.0"
 log = "0.4.18"
 env_logger = "0.10.0"

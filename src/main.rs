@@ -6,7 +6,8 @@ pub mod updater;
 pub mod models;
 
 use axum::{http::HeaderMap, routing::post, Router};
-use std::net::SocketAddr;
+use sentry::{ClientOptions, types::Dsn, integrations::debug_images::DebugImagesIntegration};
+use std::{net::SocketAddr, str::FromStr};
 
 async fn update(headers: HeaderMap) -> &'static str {
     let config_api_key = config::CONFIG.api_key.clone();
@@ -32,8 +33,16 @@ async fn update(headers: HeaderMap) -> &'static str {
 
 #[tokio::main]
 async fn main() {
-    let _guard = sentry::init(config::CONFIG.sentry_sdn.clone());
     env_logger::init();
+
+    let options = ClientOptions {
+        dsn: Some(Dsn::from_str(&config::CONFIG.sentry_dsn).unwrap()),
+        default_integrations: false,
+        ..Default::default()
+    }
+    .add_integration(DebugImagesIntegration::new());
+
+    let _guard = sentry::init(options);
 
     let app = Router::new().route("/update", post(update));
 
