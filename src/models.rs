@@ -24,7 +24,7 @@ impl UpdateModel for Book {
     }
 
     fn get_query() -> String {
-        "SELECT id, title, lang, array(SELECT id FROM book_genres WHERE book = books.id) FROM books WHERE is_deleted = 'f';".to_string()
+        "SELECT id, title, lang, array(SELECT genre FROM book_genres WHERE book = books.id) FROM books WHERE is_deleted = 'f';".to_string()
     }
 
     fn from_row(row: Row) -> Self {
