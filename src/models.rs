@@ -15,6 +15,7 @@ pub struct Book {
     pub id: i32,
     pub title: String,
     pub lang: String,
+    pub genres: Vec<i32>
 }
 
 impl UpdateModel for Book {
@@ -23,7 +24,7 @@ impl UpdateModel for Book {
     }
 
     fn get_query() -> String {
-        "SELECT id, title, lang FROM books WHERE is_deleted = 'f';".to_string()
+        "SELECT id, title, lang, array(SELECT id FROM book_genres WHERE book = books.id) FROM books WHERE is_deleted = 'f';".to_string()
     }
 
     fn from_row(row: Row) -> Self {
@@ -31,6 +32,7 @@ impl UpdateModel for Book {
             id: row.get(0),
             title: row.get(1),
             lang: row.get(2),
+            genres: row.get(3)
         }
     }
 
@@ -39,7 +41,10 @@ impl UpdateModel for Book {
     }
 
     fn get_filterable_attributes() -> Vec<String> {
-        vec!["lang".to_string()]
+        vec![
+            "lang".to_string(),
+            "genres".to_string()
+        ]
     }
 
     fn get_ranking_rules() -> Vec<String> {
