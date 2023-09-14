@@ -68,7 +68,7 @@ where
         };
     }
 
-    if let Err(err) = index.set_searchable_attributes(T::get_searchanble_attributes()).await {
+    if let Err(err) = index.set_searchable_attributes(T::get_searchable_attributes()).await {
         return Err(Box::new(err));
     };
 

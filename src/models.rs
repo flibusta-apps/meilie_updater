@@ -5,7 +5,7 @@ pub trait UpdateModel {
     fn get_index() -> String;
     fn get_query() -> String;
     fn from_row(row: Row) -> Self;
-    fn get_searchanble_attributes() -> Vec<String>;
+    fn get_searchable_attributes() -> Vec<String>;
     fn get_filterable_attributes() -> Vec<String>;
     fn get_ranking_rules() -> Vec<String>;
 }
@@ -36,7 +36,7 @@ impl UpdateModel for Book {
         }
     }
 
-    fn get_searchanble_attributes() -> Vec<String> {
+    fn get_searchable_attributes() -> Vec<String> {
         vec!["title".to_string()]
     }
 
@@ -114,7 +114,7 @@ impl UpdateModel for Author {
         }
     }
 
-    fn get_searchanble_attributes() -> Vec<String> {
+    fn get_searchable_attributes() -> Vec<String> {
         vec![
             "first_name".to_string(),
             "last_name".to_string(),
@@ -179,7 +179,7 @@ impl UpdateModel for Sequence {
         }
     }
 
-    fn get_searchanble_attributes() -> Vec<String> {
+    fn get_searchable_attributes() -> Vec<String> {
         vec!["name".to_string()]
     }
 
@@ -244,7 +244,7 @@ impl UpdateModel for Genre {
         }
     }
 
-    fn get_searchanble_attributes() -> Vec<String> {
+    fn get_searchable_attributes() -> Vec<String> {
         vec!["description".to_string()]
     }
 
