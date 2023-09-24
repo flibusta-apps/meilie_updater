@@ -10,7 +10,7 @@ pub struct Config {
     pub postgres_password: String,
 
     pub meili_host: String,
-    pub meili_master_key: String
+    pub meili_master_key: String,
 }
 
 fn get_env(env: &'static str) -> String {
@@ -31,7 +31,7 @@ impl Config {
             postgres_password: get_env("POSTGRES_PASSWORD"),
 
             meili_host: get_env("MEILI_HOST"),
-            meili_master_key: get_env("MEILI_MASTER_KEY")
+            meili_master_key: get_env("MEILI_MASTER_KEY"),
         }
     }
 }

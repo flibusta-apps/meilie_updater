@@ -2,11 +2,11 @@
 extern crate lazy_static;
 
 pub mod config;
-pub mod updater;
 pub mod models;
+pub mod updater;
 
 use axum::{http::HeaderMap, routing::post, Router};
-use sentry::{ClientOptions, types::Dsn, integrations::debug_images::DebugImagesIntegration};
+use sentry::{integrations::debug_images::DebugImagesIntegration, types::Dsn, ClientOptions};
 use std::{net::SocketAddr, str::FromStr};
 
 async fn update(headers: HeaderMap) -> &'static str {

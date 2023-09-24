@@ -1,10 +1,13 @@
 use deadpool_postgres::{Config, CreatePoolError, ManagerConfig, Pool, RecyclingMethod, Runtime};
-use tokio_postgres::NoTls;
-use futures::{StreamExt, pin_mut};
+use futures::{pin_mut, StreamExt};
 use meilisearch_sdk::client::*;
 use serde::Serialize;
+use tokio_postgres::NoTls;
 
-use crate::{config, models::{Book, UpdateModel, Author, Sequence, Genre}};
+use crate::{
+    config,
+    models::{Author, Book, Genre, Sequence, UpdateModel},
+};
 
 async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     let mut config = Config::new();
@@ -26,14 +29,15 @@ async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
 }
 
 fn get_meili_client() -> Client {
-    Client::new(config::CONFIG.meili_host.clone(), Some(config::CONFIG.meili_master_key.clone()))
+    Client::new(
+        config::CONFIG.meili_host.clone(),
+        Some(config::CONFIG.meili_master_key.clone()),
+    )
 }
 
-async fn update_model<T>(
-    pool: Pool,
-) -> Result<(), Box<dyn std::error::Error + Send>>
+async fn update_model<T>(pool: Pool) -> Result<(), Box<dyn std::error::Error + Send>>
 where
-    T: UpdateModel + Serialize
+    T: UpdateModel + Serialize,
 {
     let client = pool.get().await.unwrap();
 
@@ -42,9 +46,7 @@ where
     let index = meili_client.index(T::get_index());
 
     let params: Vec<String> = vec![];
-    let stream = match client.query_raw(
-        &T::get_query(), params
-    ).await {
+    let stream = match client.query_raw(&T::get_query(), params).await {
         Ok(stream) => stream,
         Err(err) => return Err(Box::new(err)),
     };
@@ -55,11 +57,9 @@ where
     while let Some(chunk) = chunks.next().await {
         let items: Vec<T> = chunk
             .into_iter()
-            .map(|result| {
-                match result {
-                    Ok(v) => T::from_row(v),
-                    Err(err) => panic!("{}", err),
-                }
+            .map(|result| match result {
+                Ok(v) => T::from_row(v),
+                Err(err) => panic!("{}", err),
             })
             .collect();
 
@@ -68,11 +68,17 @@ where
         };
     }
 
-    if let Err(err) = index.set_searchable_attributes(T::get_searchable_attributes()).await {
+    if let Err(err) = index
+        .set_searchable_attributes(T::get_searchable_attributes())
+        .await
+    {
         return Err(Box::new(err));
     };
 
-    if let Err(err) = index.set_filterable_attributes(T::get_filterable_attributes()).await {
+    if let Err(err) = index
+        .set_filterable_attributes(T::get_filterable_attributes())
+        .await
+    {
         return Err(Box::new(err));
     };
 
@@ -109,7 +115,7 @@ pub async fn update() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool_clone = pool.clone();
     let update_sequences_process = tokio::spawn(async move {
-        match update_model::<Sequence>(pool_clone).await  {
+        match update_model::<Sequence>(pool_clone).await {
             Ok(_) => (),
             Err(err) => panic!("{}", err),
         }
@@ -117,7 +123,7 @@ pub async fn update() -> Result<(), Box<dyn std::error::Error>> {
 
     let pool_clone = pool.clone();
     let update_genres_process = tokio::spawn(async move {
-        match update_model::<Genre>(pool_clone).await  {
+        match update_model::<Genre>(pool_clone).await {
             Ok(_) => (),
             Err(err) => panic!("{}", err),
         }
@@ -127,7 +133,7 @@ pub async fn update() -> Result<(), Box<dyn std::error::Error>> {
         update_books_process,
         update_authors_process,
         update_sequences_process,
-        update_genres_process
+        update_genres_process,
     ] {
         match process.await {
             Ok(v) => v,

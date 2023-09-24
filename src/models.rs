@@ -15,7 +15,7 @@ pub struct Book {
     pub id: i32,
     pub title: String,
     pub lang: String,
-    pub genres: Vec<i32>
+    pub genres: Vec<i32>,
 }
 
 impl UpdateModel for Book {
@@ -32,7 +32,7 @@ impl UpdateModel for Book {
             id: row.get(0),
             title: row.get(1),
             lang: row.get(2),
-            genres: row.get(3)
+            genres: row.get(3),
         }
     }
 
@@ -41,10 +41,7 @@ impl UpdateModel for Book {
     }
 
     fn get_filterable_attributes() -> Vec<String> {
-        vec![
-            "lang".to_string(),
-            "genres".to_string()
-        ]
+        vec!["lang".to_string(), "genres".to_string()]
     }
 
     fn get_ranking_rules() -> Vec<String> {
@@ -58,7 +55,6 @@ impl UpdateModel for Book {
         ]
     }
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Author {
@@ -134,18 +130,17 @@ impl UpdateModel for Author {
             "attribute".to_string(),
             "sort".to_string(),
             "exactness".to_string(),
-            "books_count:desc".to_string()
+            "books_count:desc".to_string(),
         ]
     }
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Sequence {
     pub id: i32,
     pub name: String,
     pub langs: Vec<String>,
-    pub books_count: i64
+    pub books_count: i64,
 }
 
 impl UpdateModel for Sequence {
@@ -167,7 +162,8 @@ impl UpdateModel for Sequence {
            WHERE sequences.id = book_sequences.sequence
              AND books.is_deleted = 'f') as books_count
         FROM sequences;
-        ".to_string()
+        "
+        .to_string()
     }
 
     fn from_row(row: Row) -> Self {
@@ -175,7 +171,7 @@ impl UpdateModel for Sequence {
             id: row.get(0),
             name: row.get(1),
             langs: row.get(2),
-            books_count: row.get(3)
+            books_count: row.get(3),
         }
     }
 
@@ -195,11 +191,10 @@ impl UpdateModel for Sequence {
             "attribute".to_string(),
             "sort".to_string(),
             "exactness".to_string(),
-            "books_count:desc".to_string()
+            "books_count:desc".to_string(),
         ]
     }
 }
-
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Genre {
@@ -231,7 +226,8 @@ impl UpdateModel for Genre {
             AND books.is_deleted = 'f'
         ) as books_count
         FROM genres;
-        ".to_string()
+        "
+        .to_string()
     }
 
     fn from_row(row: Row) -> Self {
@@ -240,7 +236,7 @@ impl UpdateModel for Genre {
             description: row.get(1),
             meta: row.get(2),
             langs: row.get(3),
-            books_count: row.get(4)
+            books_count: row.get(4),
         }
     }
 
@@ -260,7 +256,7 @@ impl UpdateModel for Genre {
             "attribute".to_string(),
             "sort".to_string(),
             "exactness".to_string(),
-            "books_count:desc".to_string()
+            "books_count:desc".to_string(),
         ]
     }
 }
