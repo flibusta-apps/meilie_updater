@@ -21,4 +21,4 @@ RUN update-ca-certificates
 WORKDIR /app
 
 COPY --from=builder /app/target/release/meili_updater /usr/local/bin
-ENTRYPOINT ["/start.sh"]
+CMD ["/start.sh"]
