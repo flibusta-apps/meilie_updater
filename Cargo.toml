@@ -9,6 +9,10 @@ edition = "2021"
 tokio = { version = "1.37.0", features = ["full"] }
 axum = "0.7.5"
 sentry = { version = "0.32.3", features = ["debug-images"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"]}
+sentry-tracing = "0.32.3"
+tower-http = { version = "0.5.2", features = ["trace"] }
 lazy_static = "1.4.0"
 log = "0.4.21"
 env_logger = "0.11.3"
