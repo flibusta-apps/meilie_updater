@@ -6,18 +6,18 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tokio = { version = "1.37.0", features = ["full"] }
-axum = "0.7.5"
-sentry = { version = "0.32.3", features = ["debug-images"] }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3.18", features = ["env-filter"]}
-sentry-tracing = "0.32.3"
-tower-http = { version = "0.5.2", features = ["trace"] }
-lazy_static = "1.4.0"
-log = "0.4.21"
-env_logger = "0.11.3"
-tokio-postgres = { version = "0.7.10", features = ["with-chrono-0_4"] }
-deadpool-postgres = "0.13.0"
-meilisearch-sdk = "0.25.0"
-futures = "0.3.30"
-serde = { version = "1.0.198", features = ["derive"] }
+tokio = { version = "1.42.0", features = ["full"] }
+axum = "0.7.9"
+sentry = { version = "0.35.0", features = ["debug-images"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"]}
+sentry-tracing = "0.35.0"
+tower-http = { version = "0.6.2", features = ["trace"] }
+lazy_static = "1.5.0"
+log = "0.4.22"
+env_logger = "0.11.6"
+tokio-postgres = { version = "0.7.12", features = ["with-chrono-0_4"] }
+deadpool-postgres = "0.14.1"
+meilisearch-sdk = "0.27.1"
+futures = "0.3.31"
+serde = { version = "1.0.216", features = ["derive"] }

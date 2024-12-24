@@ -33,11 +33,12 @@ fn get_meili_client() -> Client {
         config::CONFIG.meili_host.clone(),
         Some(config::CONFIG.meili_master_key.clone()),
     )
+    .unwrap()
 }
 
 async fn update_model<T>(pool: Pool) -> Result<(), Box<dyn std::error::Error + Send>>
 where
-    T: UpdateModel + Serialize,
+    T: UpdateModel + Serialize + Send + Sync,
 {
     let client = pool.get().await.unwrap();
 
