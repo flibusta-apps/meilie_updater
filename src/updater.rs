@@ -46,6 +46,24 @@ where
 
     let index = meili_client.index(T::get_index());
 
+    if let Err(err) = index
+        .set_searchable_attributes(T::get_searchable_attributes())
+        .await
+    {
+        return Err(Box::new(err));
+    };
+
+    if let Err(err) = index
+        .set_filterable_attributes(T::get_filterable_attributes())
+        .await
+    {
+        return Err(Box::new(err));
+    };
+
+    if let Err(err) = index.set_ranking_rules(T::get_ranking_rules()).await {
+        return Err(Box::new(err));
+    };
+
     let params: Vec<String> = vec![];
     let stream = match client.query_raw(&T::get_query(), params).await {
         Ok(stream) => stream,
@@ -68,24 +86,6 @@ where
             return Err(Box::new(err));
         };
     }
-
-    if let Err(err) = index
-        .set_searchable_attributes(T::get_searchable_attributes())
-        .await
-    {
-        return Err(Box::new(err));
-    };
-
-    if let Err(err) = index
-        .set_filterable_attributes(T::get_filterable_attributes())
-        .await
-    {
-        return Err(Box::new(err));
-    };
-
-    if let Err(err) = index.set_ranking_rules(T::get_ranking_rules()).await {
-        return Err(Box::new(err));
-    };
 
     Ok(())
 }
