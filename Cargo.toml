@@ -8,10 +8,10 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
 axum = "0.8.1"
-sentry = { version = "0.36.0", features = ["debug-images"] }
+sentry = { version = "0.41.0", features = ["debug-images"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"]}
-sentry-tracing = "0.36.0"
+sentry-tracing = "0.41.0"
 tower-http = { version = "0.6.2", features = ["trace"] }
 lazy_static = "1.5.0"
 log = "0.4.26"
