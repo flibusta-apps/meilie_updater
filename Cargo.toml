@@ -21,16 +21,19 @@ strip = false
 [dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
 axum = "0.8.1"
-sentry = { version = "0.41.0", features = ["debug-images"] }
+
+sentry = { version = "0.42.0", features = ["debug-images"] }
+sentry-tracing = "0.42.0"
+
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"]}
-sentry-tracing = "0.41.0"
+
 tower-http = { version = "0.6.2", features = ["trace"] }
 lazy_static = "1.5.0"
 log = "0.4.26"
 env_logger = "0.11.7"
 tokio-postgres = { version = "0.7.13", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14.1"
-meilisearch-sdk = "0.28.0"
+meilisearch-sdk = "0.29.1"
 futures = "0.3.31"
 serde = { version = "1.0.219", features = ["derive"] }
