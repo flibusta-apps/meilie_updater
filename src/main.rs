@@ -13,6 +13,10 @@ use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt};
 
+async fn health() -> &'static str {
+    "OK"
+}
+
 async fn update(headers: HeaderMap) -> &'static str {
     let config_api_key = config::CONFIG.api_key.clone();
 
@@ -57,11 +61,14 @@ async fn main() {
         .with(sentry_layer)
         .init();
 
-    let app = Router::new().route("/update", post(update)).layer(
-        TraceLayer::new_for_http()
-            .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
-            .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
-    );
+    let app = Router::new()
+        .route("/health", axum::routing::get(health))
+        .route("/update", post(update))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
+        );
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
