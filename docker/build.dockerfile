@@ -10,11 +10,11 @@ RUN cargo build --release --bin meili_updater
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y openssl ca-certificates curl jq \
+    && apt-get install -y openssl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY ./scripts/*.sh /
-RUN chmod +x /*.sh
+COPY ./scripts/start.sh /
+RUN chmod +x /start.sh
 
 RUN update-ca-certificates
 
