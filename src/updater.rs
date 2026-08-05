@@ -1,4 +1,6 @@
-use deadpool_postgres::{Config, CreatePoolError, ManagerConfig, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{
+    Config, CreatePoolError, ManagerConfig, Pool, PoolConfig, RecyclingMethod, Runtime, Timeouts,
+};
 use futures::{pin_mut, StreamExt};
 use meilisearch_sdk::client::*;
 use serde::Serialize;
@@ -33,8 +35,27 @@ pub async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     config.user = Some(config::CONFIG.postgres_user.clone());
     config.password = Some(config::CONFIG.postgres_password.clone());
     config.connect_timeout = Some(std::time::Duration::from_secs(5));
+    config.options = Some(format!(
+        "-c statement_timeout={}",
+        config::CONFIG.statement_timeout_ms
+    ));
     config.manager = Some(ManagerConfig {
         recycling_method: RecyclingMethod::Verified,
+    });
+    config.pool = Some(PoolConfig {
+        max_size: config::CONFIG.pool_max_size,
+        timeouts: Timeouts {
+            wait: Some(std::time::Duration::from_secs(
+                config::CONFIG.pool_wait_timeout_secs,
+            )),
+            create: Some(std::time::Duration::from_secs(
+                config::CONFIG.pool_create_timeout_secs,
+            )),
+            recycle: Some(std::time::Duration::from_secs(
+                config::CONFIG.pool_recycle_timeout_secs,
+            )),
+        },
+        ..Default::default()
     });
 
     match config.create_pool(Some(Runtime::Tokio1), NoTls) {
@@ -159,14 +180,16 @@ where
     };
     wait_for_meili_task(task_info, &meili_client, "set_ranking_rules").await?;
 
-    let params: Vec<String> = vec![];
-    let stream = match client.query_raw(&T::get_query(), params).await {
+    let stream = match client
+        .query_raw(&T::get_query(), std::iter::empty::<String>())
+        .await
+    {
         Ok(stream) => stream,
         Err(err) => return Err(Box::new(err)),
     };
 
     pin_mut!(stream);
-    let mut chunks = stream.chunks(1024);
+    let mut chunks = stream.chunks(config::CONFIG.batch_size);
 
     let mut total_count: usize = 0;
 

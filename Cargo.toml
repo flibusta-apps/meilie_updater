@@ -18,7 +18,7 @@ strip = false
 
 
 [dependencies]
-tokio = { version = "1.44.2", features = ["full"] }
+tokio = { version = "1.44.2", features = ["rt-multi-thread", "macros", "net", "time", "sync"] }
 axum = "0.8.1"
 
 sentry = { version = "0.42.0", features = ["debug-images"] }

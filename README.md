@@ -53,6 +53,34 @@ All configuration is provided via environment variables (see
 | `MEILI_HOST`         | Meilisearch host URL                      |
 | `MEILI_MASTER_KEY`   | Meilisearch master key                    |
 
+The following are optional and tunable, with sane defaults — the process
+does **not** panic on startup if they're missing:
+
+| Variable                    | Purpose                                                      | Default   |
+|-----------------------------|---------------------------------------------------------------|-----------|
+| `STATEMENT_TIMEOUT_MS`      | Postgres session-level `statement_timeout`, in milliseconds   | `300000`  |
+| `POOL_MAX_SIZE`             | Maximum number of connections in the Postgres pool             | `8`       |
+| `POOL_WAIT_TIMEOUT_SECS`    | Max time to wait for a free pool connection                    | `5`       |
+| `POOL_CREATE_TIMEOUT_SECS`  | Max time to wait when creating a new pool connection            | `5`       |
+| `POOL_RECYCLE_TIMEOUT_SECS` | Max time to wait when recycling a pool connection               | `5`       |
+| `BATCH_SIZE`                | Rows streamed from Postgres per Meilisearch `add_or_update` batch | `1024`  |
+
+### Tuning `BATCH_SIZE` and peak memory
+
+Each batch of rows is fully materialized twice while in flight: once as the
+collected `Vec<T>` and once as the Meilisearch SDK's serialized JSON request
+body. With 4 models (books/authors/sequences/genres) updating in parallel,
+peak memory is roughly:
+
+```
+peak ≈ 4 × BATCH_SIZE × avg_document_size_bytes × 2
+```
+
+Lowering `BATCH_SIZE` trades indexing throughput (more round-trips to
+Meilisearch) for lower peak RAM — useful when running with a constrained
+memory limit or when documents are unusually large (e.g. books with many
+authors/genres).
+
 ## Running
 
 The service listens on `0.0.0.0:8080`. See `docker/build.dockerfile` for the

@@ -7,9 +7,9 @@ pub trait UpdateModel {
     fn from_row(row: Row) -> Result<Self, tokio_postgres::Error>
     where
         Self: Sized;
-    fn get_searchable_attributes() -> Vec<String>;
-    fn get_filterable_attributes() -> Vec<String>;
-    fn get_ranking_rules() -> Vec<String>;
+    fn get_searchable_attributes() -> &'static [&'static str];
+    fn get_filterable_attributes() -> &'static [&'static str];
+    fn get_ranking_rules() -> &'static [&'static str];
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
@@ -38,22 +38,22 @@ impl UpdateModel for Book {
         })
     }
 
-    fn get_searchable_attributes() -> Vec<String> {
-        vec!["title".to_string()]
+    fn get_searchable_attributes() -> &'static [&'static str] {
+        &["title"]
     }
 
-    fn get_filterable_attributes() -> Vec<String> {
-        vec!["lang".to_string(), "genres".to_string()]
+    fn get_filterable_attributes() -> &'static [&'static str] {
+        &["lang", "genres"]
     }
 
-    fn get_ranking_rules() -> Vec<String> {
-        vec![
-            "words".to_string(),
-            "typo".to_string(),
-            "proximity".to_string(),
-            "attribute".to_string(),
-            "sort".to_string(),
-            "exactness".to_string(),
+    fn get_ranking_rules() -> &'static [&'static str] {
+        &[
+            "words",
+            "typo",
+            "proximity",
+            "attribute",
+            "sort",
+            "exactness",
         ]
     }
 }
@@ -112,27 +112,23 @@ impl UpdateModel for Author {
         })
     }
 
-    fn get_searchable_attributes() -> Vec<String> {
-        vec![
-            "first_name".to_string(),
-            "last_name".to_string(),
-            "middle_name".to_string(),
-        ]
+    fn get_searchable_attributes() -> &'static [&'static str] {
+        &["first_name", "last_name", "middle_name"]
     }
 
-    fn get_filterable_attributes() -> Vec<String> {
-        vec!["author_langs".to_string(), "translator_langs".to_string()]
+    fn get_filterable_attributes() -> &'static [&'static str] {
+        &["author_langs", "translator_langs"]
     }
 
-    fn get_ranking_rules() -> Vec<String> {
-        vec![
-            "words".to_string(),
-            "typo".to_string(),
-            "proximity".to_string(),
-            "attribute".to_string(),
-            "sort".to_string(),
-            "exactness".to_string(),
-            "books_count:desc".to_string(),
+    fn get_ranking_rules() -> &'static [&'static str] {
+        &[
+            "words",
+            "typo",
+            "proximity",
+            "attribute",
+            "sort",
+            "exactness",
+            "books_count:desc",
         ]
     }
 }
@@ -177,23 +173,23 @@ impl UpdateModel for Sequence {
         })
     }
 
-    fn get_searchable_attributes() -> Vec<String> {
-        vec!["name".to_string()]
+    fn get_searchable_attributes() -> &'static [&'static str] {
+        &["name"]
     }
 
-    fn get_filterable_attributes() -> Vec<String> {
-        vec!["langs".to_string()]
+    fn get_filterable_attributes() -> &'static [&'static str] {
+        &["langs"]
     }
 
-    fn get_ranking_rules() -> Vec<String> {
-        vec![
-            "words".to_string(),
-            "typo".to_string(),
-            "proximity".to_string(),
-            "attribute".to_string(),
-            "sort".to_string(),
-            "exactness".to_string(),
-            "books_count:desc".to_string(),
+    fn get_ranking_rules() -> &'static [&'static str] {
+        &[
+            "words",
+            "typo",
+            "proximity",
+            "attribute",
+            "sort",
+            "exactness",
+            "books_count:desc",
         ]
     }
 }
@@ -242,23 +238,23 @@ impl UpdateModel for Genre {
         })
     }
 
-    fn get_searchable_attributes() -> Vec<String> {
-        vec!["description".to_string()]
+    fn get_searchable_attributes() -> &'static [&'static str] {
+        &["description"]
     }
 
-    fn get_filterable_attributes() -> Vec<String> {
-        vec!["langs".to_string()]
+    fn get_filterable_attributes() -> &'static [&'static str] {
+        &["langs"]
     }
 
-    fn get_ranking_rules() -> Vec<String> {
-        vec![
-            "words".to_string(),
-            "typo".to_string(),
-            "proximity".to_string(),
-            "attribute".to_string(),
-            "sort".to_string(),
-            "exactness".to_string(),
-            "books_count:desc".to_string(),
+    fn get_ranking_rules() -> &'static [&'static str] {
+        &[
+            "words",
+            "typo",
+            "proximity",
+            "attribute",
+            "sort",
+            "exactness",
+            "books_count:desc",
         ]
     }
 }
@@ -270,20 +266,17 @@ mod tests {
     #[test]
     fn book_contract() {
         assert_eq!(Book::get_index(), "books");
-        assert_eq!(Book::get_searchable_attributes(), vec!["title"]);
-        assert_eq!(
-            Book::get_filterable_attributes(),
-            vec!["lang".to_string(), "genres".to_string()]
-        );
+        assert_eq!(Book::get_searchable_attributes(), &["title"]);
+        assert_eq!(Book::get_filterable_attributes(), &["lang", "genres"]);
         assert_eq!(
             Book::get_ranking_rules(),
-            vec![
-                "words".to_string(),
-                "typo".to_string(),
-                "proximity".to_string(),
-                "attribute".to_string(),
-                "sort".to_string(),
-                "exactness".to_string(),
+            &[
+                "words",
+                "typo",
+                "proximity",
+                "attribute",
+                "sort",
+                "exactness",
             ]
         );
     }
@@ -308,26 +301,22 @@ mod tests {
         assert_eq!(Author::get_index(), "authors");
         assert_eq!(
             Author::get_searchable_attributes(),
-            vec![
-                "first_name".to_string(),
-                "last_name".to_string(),
-                "middle_name".to_string(),
-            ]
+            &["first_name", "last_name", "middle_name"]
         );
         assert_eq!(
             Author::get_filterable_attributes(),
-            vec!["author_langs".to_string(), "translator_langs".to_string()]
+            &["author_langs", "translator_langs"]
         );
         assert_eq!(
             Author::get_ranking_rules(),
-            vec![
-                "words".to_string(),
-                "typo".to_string(),
-                "proximity".to_string(),
-                "attribute".to_string(),
-                "sort".to_string(),
-                "exactness".to_string(),
-                "books_count:desc".to_string(),
+            &[
+                "words",
+                "typo",
+                "proximity",
+                "attribute",
+                "sort",
+                "exactness",
+                "books_count:desc",
             ]
         );
     }
@@ -353,18 +342,18 @@ mod tests {
     #[test]
     fn sequence_contract() {
         assert_eq!(Sequence::get_index(), "sequences");
-        assert_eq!(Sequence::get_searchable_attributes(), vec!["name"]);
-        assert_eq!(Sequence::get_filterable_attributes(), vec!["langs"]);
+        assert_eq!(Sequence::get_searchable_attributes(), &["name"]);
+        assert_eq!(Sequence::get_filterable_attributes(), &["langs"]);
         assert_eq!(
             Sequence::get_ranking_rules(),
-            vec![
-                "words".to_string(),
-                "typo".to_string(),
-                "proximity".to_string(),
-                "attribute".to_string(),
-                "sort".to_string(),
-                "exactness".to_string(),
-                "books_count:desc".to_string(),
+            &[
+                "words",
+                "typo",
+                "proximity",
+                "attribute",
+                "sort",
+                "exactness",
+                "books_count:desc",
             ]
         );
     }
@@ -387,18 +376,18 @@ mod tests {
     #[test]
     fn genre_contract() {
         assert_eq!(Genre::get_index(), "genres");
-        assert_eq!(Genre::get_searchable_attributes(), vec!["description"]);
-        assert_eq!(Genre::get_filterable_attributes(), vec!["langs"]);
+        assert_eq!(Genre::get_searchable_attributes(), &["description"]);
+        assert_eq!(Genre::get_filterable_attributes(), &["langs"]);
         assert_eq!(
             Genre::get_ranking_rules(),
-            vec![
-                "words".to_string(),
-                "typo".to_string(),
-                "proximity".to_string(),
-                "attribute".to_string(),
-                "sort".to_string(),
-                "exactness".to_string(),
-                "books_count:desc".to_string(),
+            &[
+                "words",
+                "typo",
+                "proximity",
+                "attribute",
+                "sort",
+                "exactness",
+                "books_count:desc",
             ]
         );
     }
