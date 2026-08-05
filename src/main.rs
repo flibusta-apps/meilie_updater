@@ -107,6 +107,19 @@ async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     Json(last_run)
 }
 
+fn build_router(app_state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/health", axum::routing::get(health))
+        .route("/update", post(update))
+        .route("/status", axum::routing::get(status))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
+                .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .with_state(app_state)
+}
+
 #[tokio::main]
 async fn main() {
     let options = ClientOptions {
@@ -142,16 +155,7 @@ async fn main() {
         meili_client,
     });
 
-    let app = Router::new()
-        .route("/health", axum::routing::get(health))
-        .route("/update", post(update))
-        .route("/status", axum::routing::get(status))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
-                .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
-        )
-        .with_state(app_state);
+    let app = build_router(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
@@ -159,4 +163,203 @@ async fn main() {
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
     log::info!("Webserver shutdown...")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{HeaderValue, Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// Populates all env vars `config::CONFIG` needs so it can be loaded in
+    /// tests without touching real infrastructure. Safe/idempotent to call
+    /// repeatedly and from multiple tests.
+    fn set_test_env() {
+        unsafe {
+            std::env::set_var("API_KEY", "test-api-key");
+            std::env::set_var("SENTRY_DSN", "https://public@example.com/1");
+            std::env::set_var("POSTGRES_DB_NAME", "test");
+            std::env::set_var("POSTGRES_HOST", "localhost");
+            std::env::set_var("POSTGRES_PORT", "5432");
+            std::env::set_var("POSTGRES_USER", "test");
+            std::env::set_var("POSTGRES_PASSWORD", "test");
+            std::env::set_var("MEILI_HOST", "http://localhost:7700");
+            std::env::set_var("MEILI_MASTER_KEY", "test");
+        }
+    }
+
+    /// Builds an `AppState` backed by lazily-connecting Postgres/Meilisearch
+    /// clients pointed at the dummy env values above; no real infra required
+    /// since neither client connects eagerly.
+    async fn build_test_app_state(update_running: bool) -> Arc<AppState> {
+        set_test_env();
+
+        let pool = updater::get_postgres_pool()
+            .await
+            .expect("failed to build test postgres pool");
+        let meili_client =
+            updater::get_meili_client().expect("failed to build test meilisearch client");
+
+        Arc::new(AppState {
+            last_run: Mutex::new(None),
+            update_running: AtomicBool::new(update_running),
+            pool,
+            meili_client,
+        })
+    }
+
+    async fn body_string(body: Body) -> String {
+        let bytes = body.collect().await.unwrap().to_bytes();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_returns_ok() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_string(response.into_body()).await, "OK");
+    }
+
+    #[tokio::test]
+    async fn update_without_auth_header_returns_401() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/update")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body_string(response.into_body()).await, "No api-key!");
+    }
+
+    #[tokio::test]
+    async fn update_with_invalid_header_bytes_returns_401() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .body(Body::empty())
+            .unwrap();
+        request.headers_mut().insert(
+            "Authorization",
+            HeaderValue::from_bytes(&[0xFF, 0xFE]).unwrap(),
+        );
+
+        let response = app.oneshot(request).await.unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body_string(response.into_body()).await,
+            "Invalid api-key header"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_with_wrong_api_key_returns_401() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/update")
+                    .header("Authorization", "wrong-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body_string(response.into_body()).await, "Wrong api-key!");
+    }
+
+    #[tokio::test]
+    async fn update_while_already_running_returns_409() {
+        let app_state = build_test_app_state(true).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/update")
+                    .header("Authorization", "test-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            body_string(response.into_body()).await,
+            "Update already in progress"
+        );
+    }
+
+    #[tokio::test]
+    async fn update_with_correct_api_key_returns_202() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/update")
+                    .header("Authorization", "test-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(body_string(response.into_body()).await, "Update started");
+    }
+
+    #[tokio::test]
+    async fn status_with_no_run_yet_returns_null() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(body_string(response.into_body()).await, "null");
+    }
 }

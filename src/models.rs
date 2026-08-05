@@ -12,7 +12,7 @@ pub trait UpdateModel {
     fn get_ranking_rules() -> Vec<String>;
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Book {
     pub id: i32,
     pub title: String,
@@ -58,7 +58,7 @@ impl UpdateModel for Book {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Author {
     pub id: i32,
     pub first_name: String,
@@ -137,7 +137,7 @@ impl UpdateModel for Author {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Sequence {
     pub id: i32,
     pub name: String,
@@ -198,7 +198,7 @@ impl UpdateModel for Sequence {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 pub struct Genre {
     pub id: i32,
     pub description: String,
@@ -260,5 +260,162 @@ impl UpdateModel for Genre {
             "exactness".to_string(),
             "books_count:desc".to_string(),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn book_contract() {
+        assert_eq!(Book::get_index(), "books");
+        assert_eq!(Book::get_searchable_attributes(), vec!["title"]);
+        assert_eq!(
+            Book::get_filterable_attributes(),
+            vec!["lang".to_string(), "genres".to_string()]
+        );
+        assert_eq!(
+            Book::get_ranking_rules(),
+            vec![
+                "words".to_string(),
+                "typo".to_string(),
+                "proximity".to_string(),
+                "attribute".to_string(),
+                "sort".to_string(),
+                "exactness".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn book_serde_round_trip() {
+        let book = Book {
+            id: 1,
+            title: "Some Title".to_string(),
+            lang: "en".to_string(),
+            genres: vec![1, 2, 3],
+        };
+
+        let json = serde_json::to_string(&book).unwrap();
+        let round_tripped: Book = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(book, round_tripped);
+    }
+
+    #[test]
+    fn author_contract() {
+        assert_eq!(Author::get_index(), "authors");
+        assert_eq!(
+            Author::get_searchable_attributes(),
+            vec![
+                "first_name".to_string(),
+                "last_name".to_string(),
+                "middle_name".to_string(),
+            ]
+        );
+        assert_eq!(
+            Author::get_filterable_attributes(),
+            vec!["author_langs".to_string(), "translator_langs".to_string()]
+        );
+        assert_eq!(
+            Author::get_ranking_rules(),
+            vec![
+                "words".to_string(),
+                "typo".to_string(),
+                "proximity".to_string(),
+                "attribute".to_string(),
+                "sort".to_string(),
+                "exactness".to_string(),
+                "books_count:desc".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn author_serde_round_trip() {
+        let author = Author {
+            id: 1,
+            first_name: "First".to_string(),
+            last_name: "Last".to_string(),
+            middle_name: "Middle".to_string(),
+            author_langs: vec!["en".to_string()],
+            translator_langs: vec!["ru".to_string()],
+            books_count: 5,
+        };
+
+        let json = serde_json::to_string(&author).unwrap();
+        let round_tripped: Author = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(author, round_tripped);
+    }
+
+    #[test]
+    fn sequence_contract() {
+        assert_eq!(Sequence::get_index(), "sequences");
+        assert_eq!(Sequence::get_searchable_attributes(), vec!["name"]);
+        assert_eq!(Sequence::get_filterable_attributes(), vec!["langs"]);
+        assert_eq!(
+            Sequence::get_ranking_rules(),
+            vec![
+                "words".to_string(),
+                "typo".to_string(),
+                "proximity".to_string(),
+                "attribute".to_string(),
+                "sort".to_string(),
+                "exactness".to_string(),
+                "books_count:desc".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn sequence_serde_round_trip() {
+        let sequence = Sequence {
+            id: 1,
+            name: "Some Sequence".to_string(),
+            langs: vec!["en".to_string()],
+            books_count: 3,
+        };
+
+        let json = serde_json::to_string(&sequence).unwrap();
+        let round_tripped: Sequence = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(sequence, round_tripped);
+    }
+
+    #[test]
+    fn genre_contract() {
+        assert_eq!(Genre::get_index(), "genres");
+        assert_eq!(Genre::get_searchable_attributes(), vec!["description"]);
+        assert_eq!(Genre::get_filterable_attributes(), vec!["langs"]);
+        assert_eq!(
+            Genre::get_ranking_rules(),
+            vec![
+                "words".to_string(),
+                "typo".to_string(),
+                "proximity".to_string(),
+                "attribute".to_string(),
+                "sort".to_string(),
+                "exactness".to_string(),
+                "books_count:desc".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn genre_serde_round_trip() {
+        let genre = Genre {
+            id: 1,
+            description: "Some Genre".to_string(),
+            meta: "meta".to_string(),
+            langs: vec!["en".to_string()],
+            books_count: 7,
+        };
+
+        let json = serde_json::to_string(&genre).unwrap();
+        let round_tripped: Genre = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(genre, round_tripped);
     }
 }
