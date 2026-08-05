@@ -35,7 +35,12 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
         None => return (StatusCode::UNAUTHORIZED, "No api-key!"),
     };
 
-    if config_api_key != api_key.to_str().unwrap() {
+    let api_key = match api_key.to_str() {
+        Ok(v) => v,
+        Err(_) => return (StatusCode::UNAUTHORIZED, "Invalid api-key header"),
+    };
+
+    if config_api_key != api_key {
         return (StatusCode::UNAUTHORIZED, "Wrong api-key!");
     }
 
@@ -48,7 +53,10 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                 } else {
                     log::info!("Update run completed: {:?}", run_result);
                 }
-                *state.last_run.lock().unwrap() = Some(run_result);
+                *state
+                    .last_run
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(run_result);
             }
             Err(err) => log::error!("Updater err: {:?}", err),
         };
@@ -58,7 +66,11 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
 }
 
 async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let last_run = state.last_run.lock().unwrap().clone();
+    let last_run = state
+        .last_run
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
     Json(last_run)
 }
 

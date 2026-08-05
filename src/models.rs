@@ -4,7 +4,9 @@ use tokio_postgres::Row;
 pub trait UpdateModel {
     fn get_index() -> String;
     fn get_query() -> String;
-    fn from_row(row: Row) -> Self;
+    fn from_row(row: Row) -> Result<Self, tokio_postgres::Error>
+    where
+        Self: Sized;
     fn get_searchable_attributes() -> Vec<String>;
     fn get_filterable_attributes() -> Vec<String>;
     fn get_ranking_rules() -> Vec<String>;
@@ -27,13 +29,13 @@ impl UpdateModel for Book {
         "SELECT id, title, lang, array(SELECT genre FROM book_genres WHERE book = books.id) FROM books WHERE is_deleted = 'f';".to_string()
     }
 
-    fn from_row(row: Row) -> Self {
-        Self {
-            id: row.get(0),
-            title: row.get(1),
-            lang: row.get(2),
-            genres: row.get(3),
-        }
+    fn from_row(row: Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            id: row.try_get(0)?,
+            title: row.try_get(1)?,
+            lang: row.try_get(2)?,
+            genres: row.try_get(3)?,
+        })
     }
 
     fn get_searchable_attributes() -> Vec<String> {
@@ -98,16 +100,16 @@ impl UpdateModel for Author {
         .to_string()
     }
 
-    fn from_row(row: Row) -> Self {
-        Self {
-            id: row.get(0),
-            first_name: row.get(1),
-            last_name: row.get(2),
-            middle_name: row.get(3),
-            author_langs: row.get(4),
-            translator_langs: row.get(5),
-            books_count: row.get(6),
-        }
+    fn from_row(row: Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            id: row.try_get(0)?,
+            first_name: row.try_get(1)?,
+            last_name: row.try_get(2)?,
+            middle_name: row.try_get(3)?,
+            author_langs: row.try_get(4)?,
+            translator_langs: row.try_get(5)?,
+            books_count: row.try_get(6)?,
+        })
     }
 
     fn get_searchable_attributes() -> Vec<String> {
@@ -166,13 +168,13 @@ impl UpdateModel for Sequence {
         .to_string()
     }
 
-    fn from_row(row: Row) -> Self {
-        Self {
-            id: row.get(0),
-            name: row.get(1),
-            langs: row.get(2),
-            books_count: row.get(3),
-        }
+    fn from_row(row: Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            id: row.try_get(0)?,
+            name: row.try_get(1)?,
+            langs: row.try_get(2)?,
+            books_count: row.try_get(3)?,
+        })
     }
 
     fn get_searchable_attributes() -> Vec<String> {
@@ -230,14 +232,14 @@ impl UpdateModel for Genre {
         .to_string()
     }
 
-    fn from_row(row: Row) -> Self {
-        Self {
-            id: row.get(0),
-            description: row.get(1),
-            meta: row.get(2),
-            langs: row.get(3),
-            books_count: row.get(4),
-        }
+    fn from_row(row: Row) -> Result<Self, tokio_postgres::Error> {
+        Ok(Self {
+            id: row.try_get(0)?,
+            description: row.try_get(1)?,
+            meta: row.try_get(2)?,
+            langs: row.try_get(3)?,
+            books_count: row.try_get(4)?,
+        })
     }
 
     fn get_searchable_attributes() -> Vec<String> {

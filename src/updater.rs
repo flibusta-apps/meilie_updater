@@ -43,21 +43,26 @@ async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     }
 }
 
-fn get_meili_client() -> Client {
+fn get_meili_client() -> Result<Client, meilisearch_sdk::errors::Error> {
     Client::new(
         config::CONFIG.meili_host.clone(),
         Some(config::CONFIG.meili_master_key.clone()),
     )
-    .unwrap()
 }
 
 async fn update_model<T>(pool: Pool) -> Result<usize, Box<dyn std::error::Error + Send>>
 where
     T: UpdateModel + Serialize + Send + Sync,
 {
-    let client = pool.get().await.unwrap();
+    let client = match pool.get().await {
+        Ok(client) => client,
+        Err(err) => return Err(Box::new(err)),
+    };
 
-    let meili_client = get_meili_client();
+    let meili_client = match get_meili_client() {
+        Ok(client) => client,
+        Err(err) => return Err(Box::new(err)),
+    };
 
     let index = meili_client.index(T::get_index());
 
@@ -91,13 +96,19 @@ where
     let mut total_count: usize = 0;
 
     while let Some(chunk) = chunks.next().await {
-        let items: Vec<T> = chunk
-            .into_iter()
-            .map(|result| match result {
-                Ok(v) => T::from_row(v),
-                Err(err) => panic!("{}", err),
-            })
-            .collect();
+        let mut items: Vec<T> = Vec::with_capacity(chunk.len());
+
+        for result in chunk.into_iter() {
+            let row = match result {
+                Ok(row) => row,
+                Err(err) => return Err(Box::new(err)),
+            };
+
+            match T::from_row(row) {
+                Ok(item) => items.push(item),
+                Err(err) => return Err(Box::new(err)),
+            }
+        }
 
         total_count += items.len();
 
@@ -114,14 +125,14 @@ pub async fn update() -> Result<RunResult, Box<dyn std::error::Error>> {
 
     let pool = match get_postgres_pool().await {
         Ok(pool) => pool,
-        Err(err) => panic!("{:?}", err),
+        Err(err) => return Err(Box::new(err)),
     };
 
     let started = std::time::Instant::now();
     let started_at_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
     let pool_clone = pool.clone();
     let update_books_process = tokio::spawn(async move { update_model::<Book>(pool_clone).await });
