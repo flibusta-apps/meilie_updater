@@ -50,6 +50,29 @@ fn get_meili_client() -> Result<Client, meilisearch_sdk::errors::Error> {
     )
 }
 
+async fn wait_for_meili_task(
+    task_info: meilisearch_sdk::task_info::TaskInfo,
+    client: &Client,
+    context: &str,
+) -> Result<(), Box<dyn std::error::Error + Send>> {
+    let task = match task_info
+        .wait_for_completion(client, None, Some(std::time::Duration::from_secs(120)))
+        .await
+    {
+        Ok(task) => task,
+        Err(err) => return Err(Box::new(err)),
+    };
+
+    if task.is_failure() {
+        let failure = task.unwrap_failure();
+        return Err(Box::new(std::io::Error::other(format!(
+            "{context} task failed: {failure}"
+        ))));
+    }
+
+    Ok(())
+}
+
 async fn update_model<T>(pool: Pool) -> Result<usize, Box<dyn std::error::Error + Send>>
 where
     T: UpdateModel + Serialize + Send + Sync,
@@ -66,23 +89,29 @@ where
 
     let index = meili_client.index(T::get_index());
 
-    if let Err(err) = index
+    let task_info = match index
         .set_searchable_attributes(T::get_searchable_attributes())
         .await
     {
-        return Err(Box::new(err));
+        Ok(task_info) => task_info,
+        Err(err) => return Err(Box::new(err)),
     };
+    wait_for_meili_task(task_info, &meili_client, "set_searchable_attributes").await?;
 
-    if let Err(err) = index
+    let task_info = match index
         .set_filterable_attributes(T::get_filterable_attributes())
         .await
     {
-        return Err(Box::new(err));
+        Ok(task_info) => task_info,
+        Err(err) => return Err(Box::new(err)),
     };
+    wait_for_meili_task(task_info, &meili_client, "set_filterable_attributes").await?;
 
-    if let Err(err) = index.set_ranking_rules(T::get_ranking_rules()).await {
-        return Err(Box::new(err));
+    let task_info = match index.set_ranking_rules(T::get_ranking_rules()).await {
+        Ok(task_info) => task_info,
+        Err(err) => return Err(Box::new(err)),
     };
+    wait_for_meili_task(task_info, &meili_client, "set_ranking_rules").await?;
 
     let params: Vec<String> = vec![];
     let stream = match client.query_raw(&T::get_query(), params).await {
@@ -112,9 +141,11 @@ where
 
         total_count += items.len();
 
-        if let Err(err) = index.add_or_update(&items, Some("id")).await {
-            return Err(Box::new(err));
+        let task_info = match index.add_or_update(&items, Some("id")).await {
+            Ok(task_info) => task_info,
+            Err(err) => return Err(Box::new(err)),
         };
+        wait_for_meili_task(task_info, &meili_client, "add_or_update").await?;
     }
 
     Ok(total_count)
