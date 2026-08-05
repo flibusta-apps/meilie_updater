@@ -73,6 +73,22 @@ async fn wait_for_meili_task(
     Ok(())
 }
 
+/// Deletes `uid` if it exists, waiting for completion. A missing index is not an error.
+async fn delete_index_if_exists(
+    meili_client: &Client,
+    uid: &str,
+) -> Result<(), Box<dyn std::error::Error + Send>> {
+    match meili_client.delete_index(uid).await {
+        Ok(task_info) => wait_for_meili_task(task_info, meili_client, "delete_index").await,
+        Err(meilisearch_sdk::errors::Error::Meilisearch(err))
+            if err.error_code == meilisearch_sdk::errors::ErrorCode::IndexNotFound =>
+        {
+            Ok(())
+        }
+        Err(err) => Err(Box::new(err)),
+    }
+}
+
 async fn update_model<T>(pool: Pool) -> Result<usize, Box<dyn std::error::Error + Send>>
 where
     T: UpdateModel + Serialize + Send + Sync,
@@ -87,9 +103,38 @@ where
         Err(err) => return Err(Box::new(err)),
     };
 
-    let index = meili_client.index(T::get_index());
+    let live_uid = T::get_index();
+    let staging_uid = format!("{live_uid}_new");
 
-    let task_info = match index
+    // Clean up any leftover staging index from a previous crashed/failed run.
+    delete_index_if_exists(&meili_client, &staging_uid).await?;
+
+    // `swap_indexes` requires both index UIDs to already exist, so bootstrap an
+    // empty live index on the very first run.
+    match meili_client.get_index(&live_uid).await {
+        Ok(_) => (),
+        Err(meilisearch_sdk::errors::Error::Meilisearch(err))
+            if err.error_code == meilisearch_sdk::errors::ErrorCode::IndexNotFound =>
+        {
+            let task_info = match meili_client.create_index(&live_uid, Some("id")).await {
+                Ok(task_info) => task_info,
+                Err(err) => return Err(Box::new(err)),
+            };
+            wait_for_meili_task(task_info, &meili_client, "create_index (live)").await?;
+        }
+        Err(err) => return Err(Box::new(err)),
+    };
+
+    // Create the staging index and build the new dataset there.
+    let task_info = match meili_client.create_index(&staging_uid, Some("id")).await {
+        Ok(task_info) => task_info,
+        Err(err) => return Err(Box::new(err)),
+    };
+    wait_for_meili_task(task_info, &meili_client, "create_index (staging)").await?;
+
+    let staging_index = meili_client.index(&staging_uid);
+
+    let task_info = match staging_index
         .set_searchable_attributes(T::get_searchable_attributes())
         .await
     {
@@ -98,7 +143,7 @@ where
     };
     wait_for_meili_task(task_info, &meili_client, "set_searchable_attributes").await?;
 
-    let task_info = match index
+    let task_info = match staging_index
         .set_filterable_attributes(T::get_filterable_attributes())
         .await
     {
@@ -107,7 +152,10 @@ where
     };
     wait_for_meili_task(task_info, &meili_client, "set_filterable_attributes").await?;
 
-    let task_info = match index.set_ranking_rules(T::get_ranking_rules()).await {
+    let task_info = match staging_index
+        .set_ranking_rules(T::get_ranking_rules())
+        .await
+    {
         Ok(task_info) => task_info,
         Err(err) => return Err(Box::new(err)),
     };
@@ -141,11 +189,45 @@ where
 
         total_count += items.len();
 
-        let task_info = match index.add_or_update(&items, Some("id")).await {
+        let task_info = match staging_index.add_or_update(&items, Some("id")).await {
             Ok(task_info) => task_info,
             Err(err) => return Err(Box::new(err)),
         };
         wait_for_meili_task(task_info, &meili_client, "add_or_update").await?;
+    }
+
+    // Atomically publish: swap live <-> staging so the live UID now serves the
+    // freshly built dataset.
+    let swap = SwapIndexes {
+        indexes: (live_uid.clone(), staging_uid.clone()),
+    };
+    let task_info = match meili_client.swap_indexes([&swap]).await {
+        Ok(task_info) => task_info,
+        Err(err) => return Err(Box::new(err)),
+    };
+    wait_for_meili_task(task_info, &meili_client, "swap_indexes").await?;
+
+    // Best-effort cleanup: `staging_uid` now holds the old live data. Failing to
+    // delete it does not affect correctness of the publish that already happened.
+    match meili_client.delete_index(&staging_uid).await {
+        Ok(task_info) => {
+            if let Err(err) =
+                wait_for_meili_task(task_info, &meili_client, "delete_index (post-swap)").await
+            {
+                log::error!(
+                    "Failed to clean up staging index after swap: index={} err={}",
+                    staging_uid,
+                    err
+                );
+            }
+        }
+        Err(err) => {
+            log::error!(
+                "Failed to enqueue cleanup of staging index after swap: index={} err={}",
+                staging_uid,
+                err
+            );
+        }
     }
 
     Ok(total_count)
