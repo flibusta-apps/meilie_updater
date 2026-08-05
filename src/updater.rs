@@ -24,7 +24,7 @@ pub struct RunResult {
     pub indices: Vec<IndexRunResult>,
 }
 
-async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
+pub async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     let mut config = Config::new();
 
     config.host = Some(config::CONFIG.postgres_host.clone());
@@ -43,7 +43,7 @@ async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     }
 }
 
-fn get_meili_client() -> Result<Client, meilisearch_sdk::errors::Error> {
+pub fn get_meili_client() -> Result<Client, meilisearch_sdk::errors::Error> {
     Client::new(
         config::CONFIG.meili_host.clone(),
         Some(config::CONFIG.meili_master_key.clone()),
@@ -89,16 +89,14 @@ async fn delete_index_if_exists(
     }
 }
 
-async fn update_model<T>(pool: Pool) -> Result<usize, Box<dyn std::error::Error + Send>>
+async fn update_model<T>(
+    pool: Pool,
+    meili_client: Client,
+) -> Result<usize, Box<dyn std::error::Error + Send>>
 where
     T: UpdateModel + Serialize + Send + Sync,
 {
     let client = match pool.get().await {
-        Ok(client) => client,
-        Err(err) => return Err(Box::new(err)),
-    };
-
-    let meili_client = match get_meili_client() {
         Ok(client) => client,
         Err(err) => return Err(Box::new(err)),
     };
@@ -233,13 +231,11 @@ where
     Ok(total_count)
 }
 
-pub async fn update() -> Result<RunResult, Box<dyn std::error::Error>> {
+pub async fn update(
+    pool: Pool,
+    meili_client: Client,
+) -> Result<RunResult, Box<dyn std::error::Error>> {
     log::info!("Start update...");
-
-    let pool = match get_postgres_pool().await {
-        Ok(pool) => pool,
-        Err(err) => return Err(Box::new(err)),
-    };
 
     let started = std::time::Instant::now();
     let started_at_unix = std::time::SystemTime::now()
@@ -248,19 +244,24 @@ pub async fn update() -> Result<RunResult, Box<dyn std::error::Error>> {
         .unwrap_or(0);
 
     let pool_clone = pool.clone();
-    let update_books_process = tokio::spawn(async move { update_model::<Book>(pool_clone).await });
+    let meili_client_clone = meili_client.clone();
+    let update_books_process =
+        tokio::spawn(async move { update_model::<Book>(pool_clone, meili_client_clone).await });
 
     let pool_clone = pool.clone();
+    let meili_client_clone = meili_client.clone();
     let update_authors_process =
-        tokio::spawn(async move { update_model::<Author>(pool_clone).await });
+        tokio::spawn(async move { update_model::<Author>(pool_clone, meili_client_clone).await });
 
     let pool_clone = pool.clone();
+    let meili_client_clone = meili_client.clone();
     let update_sequences_process =
-        tokio::spawn(async move { update_model::<Sequence>(pool_clone).await });
+        tokio::spawn(async move { update_model::<Sequence>(pool_clone, meili_client_clone).await });
 
     let pool_clone = pool.clone();
+    let meili_client_clone = meili_client.clone();
     let update_genres_process =
-        tokio::spawn(async move { update_model::<Genre>(pool_clone).await });
+        tokio::spawn(async move { update_model::<Genre>(pool_clone, meili_client_clone).await });
 
     let mut indices: Vec<IndexRunResult> = Vec::with_capacity(4);
     let mut any_failed = false;

@@ -12,15 +12,38 @@ use axum::{
     routing::post,
     Json, Router,
 };
+use deadpool_postgres::Pool;
+use meilisearch_sdk::client::Client;
 use sentry::{integrations::debug_images::DebugImagesIntegration, types::Dsn, ClientOptions};
 use sentry_tracing::EventFilter;
-use std::{net::SocketAddr, str::FromStr, sync::Arc, sync::Mutex};
+use std::{
+    net::SocketAddr,
+    str::FromStr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+};
+use subtle::ConstantTimeEq;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt};
 
 struct AppState {
     last_run: Mutex<Option<updater::RunResult>>,
+    update_running: AtomicBool,
+    pool: Pool,
+    meili_client: Client,
+}
+
+/// Releases the "update in progress" flag when dropped, regardless of how the
+/// owning scope exits (normal return, error, or panic).
+struct RunningGuard<'a>(&'a AtomicBool);
+
+impl Drop for RunningGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 async fn health() -> &'static str {
@@ -40,12 +63,22 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
         Err(_) => return (StatusCode::UNAUTHORIZED, "Invalid api-key header"),
     };
 
-    if config_api_key != api_key {
+    if !bool::from(config_api_key.as_bytes().ct_eq(api_key.as_bytes())) {
         return (StatusCode::UNAUTHORIZED, "Wrong api-key!");
     }
 
+    if state
+        .update_running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return (StatusCode::CONFLICT, "Update already in progress");
+    }
+
     tokio::spawn(async move {
-        match updater::update().await {
+        let _running_guard = RunningGuard(&state.update_running);
+
+        match updater::update(state.pool.clone(), state.meili_client.clone()).await {
             Ok(run_result) => {
                 let any_failed = run_result.indices.iter().any(|i| !i.success);
                 if any_failed {
@@ -96,8 +129,17 @@ async fn main() {
         .with(sentry_layer)
         .init();
 
+    let pool = updater::get_postgres_pool()
+        .await
+        .unwrap_or_else(|err| panic!("Failed to create postgres pool: {:?}", err));
+    let meili_client = updater::get_meili_client()
+        .unwrap_or_else(|err| panic!("Failed to create meilisearch client: {:?}", err));
+
     let app_state = Arc::new(AppState {
         last_run: Mutex::new(None),
+        update_running: AtomicBool::new(false),
+        pool,
+        meili_client,
     });
 
     let app = Router::new()

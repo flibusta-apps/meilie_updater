@@ -1489,6 +1489,7 @@ dependencies = [
  "sentry",
  "sentry-tracing",
  "serde",
+ "subtle",
  "tokio",
  "tokio-postgres",
  "tower-http",
