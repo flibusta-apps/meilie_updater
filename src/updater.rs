@@ -9,6 +9,21 @@ use crate::{
     models::{Author, Book, Genre, Sequence, UpdateModel},
 };
 
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct IndexRunResult {
+    pub index: String,
+    pub success: bool,
+    pub document_count: Option<usize>,
+    pub error: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone, Debug)]
+pub struct RunResult {
+    pub started_at_unix: u64,
+    pub duration_ms: u64,
+    pub indices: Vec<IndexRunResult>,
+}
+
 async fn get_postgres_pool() -> Result<Pool, CreatePoolError> {
     let mut config = Config::new();
 
@@ -36,7 +51,7 @@ fn get_meili_client() -> Client {
     .unwrap()
 }
 
-async fn update_model<T>(pool: Pool) -> Result<(), Box<dyn std::error::Error + Send>>
+async fn update_model<T>(pool: Pool) -> Result<usize, Box<dyn std::error::Error + Send>>
 where
     T: UpdateModel + Serialize + Send + Sync,
 {
@@ -73,6 +88,8 @@ where
     pin_mut!(stream);
     let mut chunks = stream.chunks(1024);
 
+    let mut total_count: usize = 0;
+
     while let Some(chunk) = chunks.next().await {
         let items: Vec<T> = chunk
             .into_iter()
@@ -82,15 +99,17 @@ where
             })
             .collect();
 
+        total_count += items.len();
+
         if let Err(err) = index.add_or_update(&items, Some("id")).await {
             return Err(Box::new(err));
         };
     }
 
-    Ok(())
+    Ok(total_count)
 }
 
-pub async fn update() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn update() -> Result<RunResult, Box<dyn std::error::Error>> {
     log::info!("Start update...");
 
     let pool = match get_postgres_pool().await {
@@ -98,49 +117,104 @@ pub async fn update() -> Result<(), Box<dyn std::error::Error>> {
         Err(err) => panic!("{:?}", err),
     };
 
-    let pool_clone = pool.clone();
-    let update_books_process = tokio::spawn(async move {
-        match update_model::<Book>(pool_clone).await {
-            Ok(_) => (),
-            Err(err) => panic!("{}", err),
-        }
-    });
+    let started = std::time::Instant::now();
+    let started_at_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
 
     let pool_clone = pool.clone();
-    let update_authors_process = tokio::spawn(async move {
-        match update_model::<Author>(pool_clone).await {
-            Ok(_) => (),
-            Err(err) => panic!("{}", err),
-        }
-    });
+    let update_books_process = tokio::spawn(async move { update_model::<Book>(pool_clone).await });
 
     let pool_clone = pool.clone();
-    let update_sequences_process = tokio::spawn(async move {
-        match update_model::<Sequence>(pool_clone).await {
-            Ok(_) => (),
-            Err(err) => panic!("{}", err),
-        }
-    });
+    let update_authors_process =
+        tokio::spawn(async move { update_model::<Author>(pool_clone).await });
 
     let pool_clone = pool.clone();
-    let update_genres_process = tokio::spawn(async move {
-        match update_model::<Genre>(pool_clone).await {
-            Ok(_) => (),
-            Err(err) => panic!("{}", err),
-        }
-    });
+    let update_sequences_process =
+        tokio::spawn(async move { update_model::<Sequence>(pool_clone).await });
 
-    for process in [
-        update_books_process,
-        update_authors_process,
-        update_sequences_process,
-        update_genres_process,
+    let pool_clone = pool.clone();
+    let update_genres_process =
+        tokio::spawn(async move { update_model::<Genre>(pool_clone).await });
+
+    let mut indices: Vec<IndexRunResult> = Vec::with_capacity(4);
+    let mut any_failed = false;
+
+    for (name, process) in [
+        ("books", update_books_process),
+        ("authors", update_authors_process),
+        ("sequences", update_sequences_process),
+        ("genres", update_genres_process),
     ] {
-        match process.await {
-            Ok(v) => v,
-            Err(err) => return Err(Box::new(err)),
+        let result = match process.await {
+            Ok(Ok(count)) => {
+                log::info!("Index update finished: index={} documents={}", name, count);
+                IndexRunResult {
+                    index: name.to_string(),
+                    success: true,
+                    document_count: Some(count),
+                    error: None,
+                }
+            }
+            Ok(Err(err)) => {
+                any_failed = true;
+                log::error!("Index update failed: index={} err={}", name, err);
+                IndexRunResult {
+                    index: name.to_string(),
+                    success: false,
+                    document_count: None,
+                    error: Some(format!("{}", err)),
+                }
+            }
+            Err(err) => {
+                any_failed = true;
+                log::error!("Index update failed: index={} err={:?}", name, err);
+                IndexRunResult {
+                    index: name.to_string(),
+                    success: false,
+                    document_count: None,
+                    error: Some(format!("{:?}", err)),
+                }
+            }
         };
+
+        indices.push(result);
     }
 
-    Ok(())
+    let duration_ms = started.elapsed().as_millis() as u64;
+
+    let summary = indices
+        .iter()
+        .map(|r| {
+            format!(
+                "{}={}",
+                r.index,
+                r.document_count
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "failed".to_string())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    if any_failed {
+        log::error!(
+            "Update run finished with failures: duration_ms={} {}",
+            duration_ms,
+            summary
+        );
+    } else {
+        log::info!(
+            "Update run finished: duration_ms={} {}",
+            duration_ms,
+            summary
+        );
+    }
+
+    Ok(RunResult {
+        started_at_unix,
+        duration_ms,
+        indices,
+    })
 }

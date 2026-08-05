@@ -5,38 +5,61 @@ pub mod config;
 pub mod models;
 pub mod updater;
 
-use axum::{http::HeaderMap, routing::post, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+    routing::post,
+    Json, Router,
+};
 use sentry::{integrations::debug_images::DebugImagesIntegration, types::Dsn, ClientOptions};
 use sentry_tracing::EventFilter;
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr, sync::Arc, sync::Mutex};
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
 use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt};
+
+struct AppState {
+    last_run: Mutex<Option<updater::RunResult>>,
+}
 
 async fn health() -> &'static str {
     "OK"
 }
 
-async fn update(headers: HeaderMap) -> &'static str {
+async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
     let config_api_key = config::CONFIG.api_key.clone();
 
     let api_key = match headers.get("Authorization") {
         Some(v) => v,
-        None => return "No api-key!",
+        None => return (StatusCode::UNAUTHORIZED, "No api-key!"),
     };
 
     if config_api_key != api_key.to_str().unwrap() {
-        return "Wrong api-key!";
+        return (StatusCode::UNAUTHORIZED, "Wrong api-key!");
     }
 
-    tokio::spawn(async {
+    tokio::spawn(async move {
         match updater::update().await {
-            Ok(_) => log::info!("Updated!"),
-            Err(err) => log::info!("Updater err: {:?}", err),
+            Ok(run_result) => {
+                let any_failed = run_result.indices.iter().any(|i| !i.success);
+                if any_failed {
+                    log::error!("Update run completed with failures: {:?}", run_result);
+                } else {
+                    log::info!("Update run completed: {:?}", run_result);
+                }
+                *state.last_run.lock().unwrap() = Some(run_result);
+            }
+            Err(err) => log::error!("Updater err: {:?}", err),
         };
     });
 
-    "Update started"
+    (StatusCode::ACCEPTED, "Update started")
+}
+
+async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let last_run = state.last_run.lock().unwrap().clone();
+    Json(last_run)
 }
 
 #[tokio::main]
@@ -61,14 +84,20 @@ async fn main() {
         .with(sentry_layer)
         .init();
 
+    let app_state = Arc::new(AppState {
+        last_run: Mutex::new(None),
+    });
+
     let app = Router::new()
         .route("/health", axum::routing::get(health))
         .route("/update", post(update))
+        .route("/status", axum::routing::get(status))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(trace::DefaultMakeSpan::new().level(Level::INFO))
                 .on_response(trace::DefaultOnResponse::new().level(Level::INFO)),
-        );
+        )
+        .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8080));
 
