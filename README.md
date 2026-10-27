@@ -27,9 +27,9 @@ Responses:
 
 ### `GET /status`
 
-Returns the result of the last completed update run as JSON: per-index
-document counts, success/error status, and duration. Returns `null` if no
-run has happened yet since the process started.
+Requires the `Authorization` header (same as `POST /update`). Returns
+`{"running": bool, "last_run": ...}` where `last_run` holds per-index document
+counts, success/error status, and duration (`null` until a run has completed).
 
 ### `GET /health`
 
