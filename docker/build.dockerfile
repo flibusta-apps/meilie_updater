@@ -10,16 +10,16 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 # Build dependencies only - this layer is cached as long as
 # Cargo.toml/Cargo.lock don't change.
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN cargo chef cook --release --locked --recipe-path recipe.json
 
 COPY . .
-RUN cargo build --release --bin meili_updater
+RUN cargo build --release --locked --bin meili_updater
 
 
 FROM debian:bookworm-slim
 
 RUN apt-get update \
-    && apt-get install -y openssl ca-certificates curl \
+    && apt-get install -y --no-install-recommends libssl3 ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd --system --no-create-home appuser

@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main" ]
 
+permissions:
+  contents: read
+
 jobs:
   build-test-lint:
     name: Build, test and lint
@@ -17,16 +20,25 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Cache cargo dependencies
         uses: Swatinem/rust-cache@v2
 
+      - name: Format
+        run: cargo fmt --all --check
+
       - name: Build
-        run: cargo build --all-features --verbose
+        run: cargo build --locked --all-features --verbose
 
       - name: Test
-        run: cargo test --all-features --verbose
+        run: cargo test --locked --all-features --verbose
 
       - name: Clippy
-        run: cargo clippy --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit
+        run: cargo audit

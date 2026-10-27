@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
-
 pub mod config;
 pub mod models;
 pub mod updater;
@@ -8,13 +5,13 @@ pub mod updater;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::post,
     Json, Router,
 };
 use deadpool_postgres::Pool;
-use meilisearch_sdk::client::Client;
-use sentry::{integrations::debug_images::DebugImagesIntegration, types::Dsn, ClientOptions};
+use futures::future::BoxFuture;
+use sentry::{types::Dsn, ClientOptions};
 use sentry_tracing::EventFilter;
 use std::{
     net::SocketAddr,
@@ -23,17 +20,57 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 use subtle::ConstantTimeEq;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
-use tracing_subscriber::{filter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+/// Function performing one update run; injectable so tests never touch real services.
+type Runner = Arc<
+    dyn Fn(Pool, updater::MeiliClient) -> BoxFuture<'static, Result<updater::RunResult, String>>
+        + Send
+        + Sync,
+>;
 
 struct AppState {
     last_run: Mutex<Option<updater::RunResult>>,
     update_running: AtomicBool,
     pool: Pool,
-    meili_client: Client,
+    meili_client: updater::MeiliClient,
+    runner: Runner,
+}
+
+fn default_runner() -> Runner {
+    Arc::new(|pool, client| {
+        Box::pin(async move {
+            let timeout = Duration::from_secs(config::CONFIG.update_timeout_secs);
+            match tokio::time::timeout(timeout, updater::update(pool, client)).await {
+                Ok(Ok(run_result)) => Ok(run_result),
+                Ok(Err(err)) => Err(err.to_string()),
+                Err(_) => Err(format!("update run timed out after {timeout:?}")),
+            }
+        })
+    })
+}
+
+/// Checks the `Authorization` header against the configured API key.
+fn authorize(headers: &HeaderMap) -> Result<(), (StatusCode, &'static str)> {
+    let api_key = match headers.get("Authorization") {
+        Some(v) => v,
+        None => return Err((StatusCode::UNAUTHORIZED, "No api-key!")),
+    };
+
+    let api_key = match api_key.to_str() {
+        Ok(v) => v,
+        Err(_) => return Err((StatusCode::UNAUTHORIZED, "Invalid api-key header")),
+    };
+
+    if !bool::from(config::CONFIG.api_key.as_bytes().ct_eq(api_key.as_bytes())) {
+        return Err((StatusCode::UNAUTHORIZED, "Wrong api-key!"));
+    }
+    Ok(())
 }
 
 /// Releases the "update in progress" flag when dropped, regardless of how the
@@ -51,20 +88,8 @@ async fn health() -> &'static str {
 }
 
 async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl IntoResponse {
-    let config_api_key = config::CONFIG.api_key.clone();
-
-    let api_key = match headers.get("Authorization") {
-        Some(v) => v,
-        None => return (StatusCode::UNAUTHORIZED, "No api-key!"),
-    };
-
-    let api_key = match api_key.to_str() {
-        Ok(v) => v,
-        Err(_) => return (StatusCode::UNAUTHORIZED, "Invalid api-key header"),
-    };
-
-    if !bool::from(config_api_key.as_bytes().ct_eq(api_key.as_bytes())) {
-        return (StatusCode::UNAUTHORIZED, "Wrong api-key!");
+    if let Err(resp) = authorize(&headers) {
+        return resp;
     }
 
     if state
@@ -78,7 +103,7 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
     tokio::spawn(async move {
         let _running_guard = RunningGuard(&state.update_running);
 
-        match updater::update(state.pool.clone(), state.meili_client.clone()).await {
+        match (state.runner)(state.pool.clone(), state.meili_client.clone()).await {
             Ok(run_result) => {
                 let any_failed = run_result.indices.iter().any(|i| !i.success);
                 if any_failed {
@@ -91,20 +116,28 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
                     .lock()
                     .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(run_result);
             }
-            Err(err) => log::error!("Updater err: {:?}", err),
+            Err(err) => log::error!("Updater err: {}", err),
         };
     });
 
     (StatusCode::ACCEPTED, "Update started")
 }
 
-async fn status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
+    if let Err(resp) = authorize(&headers) {
+        return resp.into_response();
+    }
+
     let last_run = state
         .last_run
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    Json(last_run)
+    Json(serde_json::json!({
+        "running": state.update_running.load(Ordering::SeqCst),
+        "last_run": last_run,
+    }))
+    .into_response()
 }
 
 fn build_router(app_state: Arc<AppState>) -> Router {
@@ -124,10 +157,9 @@ fn build_router(app_state: Arc<AppState>) -> Router {
 async fn main() {
     let options = ClientOptions {
         dsn: Some(Dsn::from_str(&config::CONFIG.sentry_dsn).unwrap()),
-        default_integrations: false,
+        release: sentry::release_name!(),
         ..Default::default()
-    }
-    .add_integration(DebugImagesIntegration::new());
+    };
 
     let _guard = sentry::init(options);
 
@@ -138,7 +170,7 @@ async fn main() {
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_target(false))
-        .with(filter::LevelFilter::INFO)
+        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with(sentry_layer)
         .init();
 
@@ -153,6 +185,7 @@ async fn main() {
         update_running: AtomicBool::new(false),
         pool,
         meili_client,
+        runner: default_runner(),
     });
 
     let app = build_router(app_state);
@@ -177,7 +210,8 @@ mod tests {
     /// tests without touching real infrastructure. Safe/idempotent to call
     /// repeatedly and from multiple tests.
     fn set_test_env() {
-        unsafe {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| unsafe {
             std::env::set_var("API_KEY", "test-api-key");
             std::env::set_var("SENTRY_DSN", "https://public@example.com/1");
             std::env::set_var("POSTGRES_DB_NAME", "test");
@@ -187,7 +221,7 @@ mod tests {
             std::env::set_var("POSTGRES_PASSWORD", "test");
             std::env::set_var("MEILI_HOST", "http://localhost:7700");
             std::env::set_var("MEILI_MASTER_KEY", "test");
-        }
+        });
     }
 
     /// Builds an `AppState` backed by lazily-connecting Postgres/Meilisearch
@@ -207,6 +241,16 @@ mod tests {
             update_running: AtomicBool::new(update_running),
             pool,
             meili_client,
+            // Never touch real services from tests.
+            runner: Arc::new(|_, _| {
+                Box::pin(async {
+                    Ok(updater::RunResult {
+                        started_at_unix: 0,
+                        duration_ms: 0,
+                        indices: vec![],
+                    })
+                })
+            }),
         })
     }
 
@@ -345,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_with_no_run_yet_returns_null() {
+    async fn status_without_auth_returns_401() {
         let app_state = build_test_app_state(false).await;
         let app = build_router(app_state);
 
@@ -359,7 +403,29 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn status_with_no_run_yet_reports_not_running() {
+        let app_state = build_test_app_state(false).await;
+        let app = build_router(app_state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/status")
+                    .header("Authorization", "test-api-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(body_string(response.into_body()).await, "null");
+        let body: serde_json::Value =
+            serde_json::from_str(&body_string(response.into_body()).await).unwrap();
+        assert_eq!(body["running"], false);
+        assert!(body["last_run"].is_null());
     }
 }

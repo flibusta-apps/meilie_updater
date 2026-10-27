@@ -76,7 +76,7 @@ impl UpdateModel for Author {
 
     fn get_query() -> String {
         "
-        SELECT id, first_name, last_name, middle_name,
+        SELECT id, first_name, last_name, COALESCE(middle_name, '') AS middle_name,
         array(
           SELECT DISTINCT lang FROM book_authors
           LEFT JOIN books ON book = books.id
