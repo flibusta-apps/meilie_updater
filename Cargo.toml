@@ -31,7 +31,7 @@ tower-http = { version = "0.6.2", features = ["trace"] }
 log = "0.4.26"
 tokio-postgres = { version = "0.7.13", features = ["with-chrono-0_4"] }
 deadpool-postgres = "0.14.1"
-meilisearch-sdk = "0.29.1"
+meilisearch-sdk = "0.33.0"
 futures = "0.3.31"
 futures-io = "0.3"
 async-trait = "0.1"
