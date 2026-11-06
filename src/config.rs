@@ -17,6 +17,7 @@ pub struct Config {
 
     /// Postgres session-level `statement_timeout`, in milliseconds.
     /// Env: `STATEMENT_TIMEOUT_MS`, default `300000`.
+    /// Snapshot streaming overrides this locally with the overall run budget.
     pub statement_timeout_ms: u64,
     /// Maximum number of connections in the Postgres pool.
     /// Env: `POOL_MAX_SIZE`, default `8`.

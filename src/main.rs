@@ -16,10 +16,7 @@ use sentry_tracing::EventFilter;
 use std::{
     net::SocketAddr,
     str::FromStr,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use subtle::ConstantTimeEq;
@@ -36,21 +33,24 @@ type Runner = Arc<
 
 struct AppState {
     last_run: Mutex<Option<updater::RunResult>>,
-    update_running: AtomicBool,
+    scheduling: Mutex<Scheduling>,
     pool: Pool,
     meili_client: updater::MeiliClient,
     runner: Runner,
 }
 
+#[derive(Default)]
+struct Scheduling {
+    running: bool,
+    rerun_requested: bool,
+}
+
 fn default_runner() -> Runner {
     Arc::new(|pool, client| {
         Box::pin(async move {
-            let timeout = Duration::from_secs(config::CONFIG.update_timeout_secs);
-            match tokio::time::timeout(timeout, updater::update(pool, client)).await {
-                Ok(Ok(run_result)) => Ok(run_result),
-                Ok(Err(err)) => Err(err.to_string()),
-                Err(_) => Err(format!("update run timed out after {timeout:?}")),
-            }
+            updater::update(pool, client)
+                .await
+                .map_err(|err| err.to_string())
         })
     })
 }
@@ -75,11 +75,11 @@ fn authorize(headers: &HeaderMap) -> Result<(), (StatusCode, &'static str)> {
 
 /// Releases the "update in progress" flag when dropped, regardless of how the
 /// owning scope exits (normal return, error, or panic).
-struct RunningGuard<'a>(&'a AtomicBool);
+struct RunningGuard<'a>(&'a Mutex<Scheduling>);
 
 impl Drop for RunningGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).running = false;
     }
 }
 
@@ -92,32 +92,51 @@ async fn update(State(state): State<Arc<AppState>>, headers: HeaderMap) -> impl 
         return resp;
     }
 
-    if state
-        .update_running
-        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-        .is_err()
     {
-        return (StatusCode::CONFLICT, "Update already in progress");
+        let mut scheduling = state.scheduling.lock().unwrap_or_else(|p| p.into_inner());
+        if scheduling.running {
+            scheduling.rerun_requested = true;
+            return (StatusCode::ACCEPTED, "Update rerun queued");
+        }
+        scheduling.running = true;
     }
 
     tokio::spawn(async move {
-        let _running_guard = RunningGuard(&state.update_running);
-
-        match (state.runner)(state.pool.clone(), state.meili_client.clone()).await {
-            Ok(run_result) => {
-                let any_failed = run_result.indices.iter().any(|i| !i.success);
-                if any_failed {
-                    log::error!("Update run completed with failures: {:?}", run_result);
-                } else {
-                    log::info!("Update run completed: {:?}", run_result);
-                }
-                *state
-                    .last_run
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(run_result);
+        let mut running_guard = Some(RunningGuard(&state.scheduling));
+        loop {
+            let started = std::time::Instant::now();
+            let started_at_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let result = (state.runner)(state.pool.clone(), state.meili_client.clone()).await;
+            let run = result.unwrap_or_else(|err| updater::RunResult {
+                started_at_unix,
+                duration_ms: started.elapsed().as_millis() as u64,
+                outcome: "failed".into(),
+                error: Some(err),
+                indices: Vec::new(),
+            });
+            let busy = run.outcome == "busy";
+            log::info!("Update run completed: {:?}", run);
+            *state.last_run.lock().unwrap_or_else(|p| p.into_inner()) = Some(run);
+            // A different replica owns the lock: retain this accepted trigger
+            // and retry, rather than silently dropping it. Never spin hot.
+            if busy {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
             }
-            Err(err) => log::error!("Updater err: {}", err),
-        };
+            let mut scheduling = state.scheduling.lock().unwrap_or_else(|p| p.into_inner());
+            if scheduling.rerun_requested {
+                scheduling.rerun_requested = false;
+                continue;
+            }
+            // Disarm before releasing the mutex: a new request can then start
+            // a worker without the old guard clearing its running flag.
+            std::mem::forget(running_guard.take());
+            scheduling.running = false;
+            break;
+        }
     });
 
     (StatusCode::ACCEPTED, "Update started")
@@ -134,7 +153,7 @@ async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Respo
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
     Json(serde_json::json!({
-        "running": state.update_running.load(Ordering::SeqCst),
+        "running": state.scheduling.lock().unwrap_or_else(|p| p.into_inner()).running,
         "last_run": last_run,
     }))
     .into_response()
@@ -182,7 +201,7 @@ async fn main() {
 
     let app_state = Arc::new(AppState {
         last_run: Mutex::new(None),
-        update_running: AtomicBool::new(false),
+        scheduling: Mutex::new(Scheduling::default()),
         pool,
         meili_client,
         runner: default_runner(),
@@ -238,7 +257,10 @@ mod tests {
 
         Arc::new(AppState {
             last_run: Mutex::new(None),
-            update_running: AtomicBool::new(update_running),
+            scheduling: Mutex::new(Scheduling {
+                running: update_running,
+                rerun_requested: false,
+            }),
             pool,
             meili_client,
             // Never touch real services from tests.
@@ -247,6 +269,8 @@ mod tests {
                     Ok(updater::RunResult {
                         started_at_unix: 0,
                         duration_ms: 0,
+                        outcome: "success".into(),
+                        error: None,
                         indices: vec![],
                     })
                 })
@@ -257,6 +281,74 @@ mod tests {
     async fn body_string(body: Body) -> String {
         let bytes = body.collect().await.unwrap().to_bytes();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    async fn trigger(state: Arc<AppState>) {
+        let mut headers = HeaderMap::new();
+        headers.insert("Authorization", HeaderValue::from_static("test-api-key"));
+        let response = update(State(state), headers).await.into_response();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn busy_requests_coalesce_and_runner_errors_replace_last_success() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(tokio::sync::Semaphore::new(0));
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let mut state = build_test_app_state(false).await;
+        let calls_runner = calls.clone();
+        let entered_runner = entered.clone();
+        let release_runner = release.clone();
+        Arc::get_mut(&mut state).unwrap().runner = Arc::new(move |_, _| {
+            let calls = calls_runner.clone();
+            let entered = entered_runner.clone();
+            let release = release_runner.clone();
+            Box::pin(async move {
+                let call = calls.fetch_add(1, Ordering::SeqCst);
+                entered.add_permits(1);
+                release.acquire().await.unwrap().forget();
+                if call == 0 {
+                    Ok(updater::RunResult {
+                        started_at_unix: 1,
+                        duration_ms: 1,
+                        outcome: "success".into(),
+                        error: None,
+                        indices: vec![],
+                    })
+                } else {
+                    Err("simulated timeout/error".into())
+                }
+            })
+        });
+        trigger(state.clone()).await;
+        entered.acquire().await.unwrap().forget();
+        for _ in 0..3 {
+            trigger(state.clone()).await;
+        }
+        release.add_permits(1);
+        entered.acquire().await.unwrap().forget();
+        assert_eq!(
+            state.last_run.lock().unwrap().as_ref().unwrap().outcome,
+            "success"
+        );
+        release.add_permits(1);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if !state.scheduling.lock().unwrap().running {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let last = state.last_run.lock().unwrap();
+        let last = last.as_ref().unwrap();
+        assert_eq!(last.outcome, "failed");
+        assert_eq!(last.error.as_deref(), Some("simulated timeout/error"));
+        assert!(last.started_at_unix > 1);
     }
 
     #[tokio::test]
@@ -344,9 +436,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn update_while_already_running_returns_409() {
+    async fn update_while_already_running_queues_rerun() {
         let app_state = build_test_app_state(true).await;
-        let app = build_router(app_state);
+        let app = build_router(app_state.clone());
 
         let response = app
             .oneshot(
@@ -360,11 +452,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
         assert_eq!(
             body_string(response.into_body()).await,
-            "Update already in progress"
+            "Update rerun queued"
         );
+        assert!(app_state.scheduling.lock().unwrap().rerun_requested);
     }
 
     #[tokio::test]

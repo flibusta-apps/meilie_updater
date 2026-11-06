@@ -7,3 +7,5 @@ docs
 .gitignore
 .vscode
 .idea
+.env
+.env.*

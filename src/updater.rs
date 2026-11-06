@@ -30,6 +30,8 @@ pub struct IndexRunResult {
 pub struct RunResult {
     pub started_at_unix: u64,
     pub duration_ms: u64,
+    pub outcome: String,
+    pub error: Option<String>,
     pub indices: Vec<IndexRunResult>,
 }
 
@@ -153,11 +155,14 @@ async fn wait_task(
 
 fn ensure_task_succeeded(task: Task, context: &str) -> Result<(), BoxError> {
     match task {
+        Task::Succeeded { .. } => Ok(()),
         Task::Failed { content } => Err(boxed(std::io::Error::other(format!(
             "{context} task failed: {}",
             content.error
         )))),
-        _ => Ok(()),
+        task => Err(boxed(std::io::Error::other(format!(
+            "{context} task did not succeed: {task:?}"
+        )))),
     }
 }
 
@@ -213,20 +218,15 @@ fn check_publish_allowed(
     Ok(())
 }
 
-async fn update_model<T>(pool: Pool, meili_client: MeiliClient) -> Result<usize, BoxError>
+async fn update_model<T>(
+    client: &deadpool_postgres::Transaction<'_>,
+    meili_client: &MeiliClient,
+    staging_uid: &str,
+) -> Result<usize, BoxError>
 where
     T: UpdateModel + Serialize + Send + Sync,
 {
-    let client = match pool.get().await {
-        Ok(client) => client,
-        Err(err) => return Err(Box::new(err)),
-    };
-
     let live_uid = T::get_index();
-    let staging_uid = format!("{live_uid}_new");
-
-    // Clean up any leftover staging index from a previous crashed/failed run.
-    delete_index_if_exists(&meili_client, &staging_uid).await?;
 
     // `swap_indexes` requires both index UIDs to already exist, so bootstrap an
     // empty live index on the very first run.
@@ -237,7 +237,7 @@ where
                 Ok(task_info) => task_info,
                 Err(err) => return Err(Box::new(err)),
             };
-            wait_for_meili_task(task_info, &meili_client, "create_index (live)").await?;
+            wait_for_meili_task(task_info, meili_client, "create_index (live)").await?;
         }
         Err(err) => return Err(Box::new(err)),
     };
@@ -247,9 +247,9 @@ where
         Ok(task_info) => task_info,
         Err(err) => return Err(Box::new(err)),
     };
-    wait_for_meili_task(task_info, &meili_client, "create_index (staging)").await?;
+    wait_for_meili_task(task_info, meili_client, "create_index (staging)").await?;
 
-    let staging_index = meili_client.index(&staging_uid);
+    let staging_index = meili_client.index(staging_uid);
 
     let task_info = match staging_index
         .set_searchable_attributes(T::get_searchable_attributes())
@@ -258,7 +258,7 @@ where
         Ok(task_info) => task_info,
         Err(err) => return Err(Box::new(err)),
     };
-    wait_for_meili_task(task_info, &meili_client, "set_searchable_attributes").await?;
+    wait_for_meili_task(task_info, meili_client, "set_searchable_attributes").await?;
 
     let task_info = match staging_index
         .set_filterable_attributes(T::get_filterable_attributes())
@@ -267,7 +267,7 @@ where
         Ok(task_info) => task_info,
         Err(err) => return Err(Box::new(err)),
     };
-    wait_for_meili_task(task_info, &meili_client, "set_filterable_attributes").await?;
+    wait_for_meili_task(task_info, meili_client, "set_filterable_attributes").await?;
 
     let task_info = match staging_index
         .set_ranking_rules(T::get_ranking_rules())
@@ -276,7 +276,7 @@ where
         Ok(task_info) => task_info,
         Err(err) => return Err(Box::new(err)),
     };
-    wait_for_meili_task(task_info, &meili_client, "set_ranking_rules").await?;
+    wait_for_meili_task(task_info, meili_client, "set_ranking_rules").await?;
 
     let stream = match client
         .query_raw(&T::get_query(), std::iter::empty::<String>())
@@ -315,7 +315,7 @@ where
 
     if let Some(last) = last_task_info {
         let timeout = Duration::from_secs(config::CONFIG.update_timeout_secs);
-        let task = wait_task(last, &meili_client, timeout).await?;
+        let task = wait_task(last, meili_client, timeout).await?;
         ensure_task_succeeded(task, "add_or_update")?;
 
         for uid in task_uids {
@@ -342,57 +342,98 @@ where
         config::CONFIG.max_shrink_ratio,
         config::CONFIG.allow_empty_index,
     ) {
-        if let Err(err) = delete_index_if_exists(&meili_client, &staging_uid).await {
-            log::error!("Failed to remove rejected staging index {staging_uid}: {err}");
-        }
         return Err(boxed(std::io::Error::other(format!(
             "refusing to publish index {live_uid}: {reason}"
         ))));
     }
 
-    // Atomically publish: swap live <-> staging so the live UID now serves the
-    // freshly built dataset.
-    let swap = SwapIndexes {
-        indexes: (live_uid.clone(), staging_uid.clone()),
-    };
-    let task_info = meili_client.swap_indexes([&swap]).await.map_err(boxed)?;
-    wait_for_meili_task(task_info, &meili_client, "swap_indexes").await?;
-
-    // Best-effort cleanup: `staging_uid` now holds the old live data. Failing to
-    // delete it does not affect correctness of the publish that already happened.
-    match meili_client.delete_index(&staging_uid).await {
-        Ok(task_info) => {
-            if let Err(err) =
-                wait_for_meili_task(task_info, &meili_client, "delete_index (post-swap)").await
-            {
-                log::error!(
-                    "Failed to clean up staging index after swap: index={} err={}",
-                    staging_uid,
-                    err
-                );
-            }
-        }
-        Err(err) => {
-            log::error!(
-                "Failed to enqueue cleanup of staging index after swap: index={} err={}",
-                staging_uid,
-                err
-            );
-        }
-    }
-
     Ok(total_count)
 }
 
-/// Aborts the wrapped tasks when dropped (e.g. when the run is cancelled by a timeout).
-struct AbortOnDrop(Vec<tokio::task::AbortHandle>);
+// Stable across replicas. The connection is detached from the pool so dropping
+// it always closes the session (and releases the advisory lock), even on panic.
+const UPDATE_LOCK: i64 = 0x6d65696c695f7570;
+const INDEX_NAMES: [&str; 4] = ["books", "authors", "sequences", "genres"];
 
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        for handle in &self.0 {
-            handle.abort();
+fn is_staging_uid(uid: &str) -> bool {
+    INDEX_NAMES
+        .iter()
+        .any(|name| uid == format!("{name}_new") || uid.starts_with(&format!("{name}_new_")))
+}
+
+async fn clean_stale_indexes(client: &MeiliClient) -> Result<(), BoxError> {
+    // Fetch all pages before deleting, otherwise offsets shift while paginating.
+    let mut offset = 0;
+    let mut stale = Vec::new();
+    loop {
+        let mut query = meilisearch_sdk::indexes::IndexesQuery::new(client);
+        query.with_offset(offset).with_limit(100);
+        let page = client.list_all_indexes_with(&query).await.map_err(boxed)?;
+        for index in &page.results {
+            if is_staging_uid(&index.uid) {
+                stale.push(index.uid.clone());
+            }
+        }
+        offset += page.results.len();
+        if offset >= page.total as usize || page.results.is_empty() {
+            break;
         }
     }
+    for uid in stale {
+        delete_index_if_exists(client, &uid).await?;
+    }
+    Ok(())
+}
+
+async fn build_generation(
+    connection: &mut deadpool_postgres::ClientWrapper,
+    client: &MeiliClient,
+    staging: &[String],
+) -> Result<Vec<IndexRunResult>, BoxError> {
+    clean_stale_indexes(client).await?;
+    let transaction = connection
+        .build_transaction()
+        .isolation_level(tokio_postgres::IsolationLevel::RepeatableRead)
+        .read_only(true)
+        .start()
+        .await
+        .map_err(boxed)?;
+    // query_raw can remain active while we wait on Meilisearch HTTP. Give each
+    // streaming statement the whole run budget, not the short session default.
+    let timeout_ms = config::CONFIG.update_timeout_secs.saturating_mul(1000);
+    transaction
+        .execute(
+            "SELECT set_config('statement_timeout', $1, true)",
+            &[&timeout_ms.to_string()],
+        )
+        .await
+        .map_err(boxed)?;
+    let counts = [
+        update_model::<Book>(&transaction, client, &staging[0]).await?,
+        update_model::<Author>(&transaction, client, &staging[1]).await?,
+        update_model::<Sequence>(&transaction, client, &staging[2]).await?,
+        update_model::<Genre>(&transaction, client, &staging[3]).await?,
+    ];
+    transaction.commit().await.map_err(boxed)?;
+    let swaps: Vec<_> = INDEX_NAMES
+        .iter()
+        .zip(staging)
+        .map(|(live, new)| SwapIndexes {
+            indexes: ((*live).to_string(), new.clone()),
+        })
+        .collect();
+    let task = client.swap_indexes(&swaps).await.map_err(boxed)?;
+    wait_for_meili_task(task, client, "swap_indexes (all indexes)").await?;
+    Ok(INDEX_NAMES
+        .iter()
+        .zip(counts)
+        .map(|(name, count)| IndexRunResult {
+            index: (*name).to_string(),
+            success: true,
+            document_count: Some(count),
+            error: None,
+        })
+        .collect())
 }
 
 pub async fn update(
@@ -407,110 +448,58 @@ pub async fn update(
         .map(|d| d.as_secs())
         .unwrap_or(0);
 
-    let pool_clone = pool.clone();
-    let meili_client_clone = meili_client.clone();
-    let update_books_process =
-        tokio::spawn(async move { update_model::<Book>(pool_clone, meili_client_clone).await });
-
-    let pool_clone = pool.clone();
-    let meili_client_clone = meili_client.clone();
-    let update_authors_process =
-        tokio::spawn(async move { update_model::<Author>(pool_clone, meili_client_clone).await });
-
-    let pool_clone = pool.clone();
-    let meili_client_clone = meili_client.clone();
-    let update_sequences_process =
-        tokio::spawn(async move { update_model::<Sequence>(pool_clone, meili_client_clone).await });
-
-    let pool_clone = pool.clone();
-    let meili_client_clone = meili_client.clone();
-    let update_genres_process =
-        tokio::spawn(async move { update_model::<Genre>(pool_clone, meili_client_clone).await });
-
-    let _abort_guard = AbortOnDrop(vec![
-        update_books_process.abort_handle(),
-        update_authors_process.abort_handle(),
-        update_sequences_process.abort_handle(),
-        update_genres_process.abort_handle(),
-    ]);
-
-    let mut indices: Vec<IndexRunResult> = Vec::with_capacity(4);
-    let mut any_failed = false;
-
-    for (name, process) in [
-        ("books", update_books_process),
-        ("authors", update_authors_process),
-        ("sequences", update_sequences_process),
-        ("genres", update_genres_process),
-    ] {
-        let result = match process.await {
-            Ok(Ok(count)) => {
-                log::info!("Index update finished: index={} documents={}", name, count);
-                IndexRunResult {
-                    index: name.to_string(),
-                    success: true,
-                    document_count: Some(count),
-                    error: None,
-                }
-            }
-            Ok(Err(err)) => {
-                any_failed = true;
-                log::error!("Index update failed: index={} err={}", name, err);
-                IndexRunResult {
-                    index: name.to_string(),
-                    success: false,
-                    document_count: None,
-                    error: Some(format!("{}", err)),
-                }
-            }
-            Err(err) => {
-                any_failed = true;
-                log::error!("Index update failed: index={} err={:?}", name, err);
-                IndexRunResult {
-                    index: name.to_string(),
-                    success: false,
-                    document_count: None,
-                    error: Some(format!("{:?}", err)),
-                }
-            }
-        };
-
-        indices.push(result);
+    let timeout = Duration::from_secs(config::CONFIG.update_timeout_secs);
+    let connection = tokio::time::timeout(timeout, pool.get()).await??;
+    let mut connection = deadpool_postgres::Object::take(connection);
+    let acquired: bool = connection
+        .query_one("SELECT pg_try_advisory_lock($1)", &[&UPDATE_LOCK])
+        .await?
+        .get(0);
+    if !acquired {
+        return Ok(RunResult {
+            started_at_unix,
+            duration_ms: started.elapsed().as_millis() as u64,
+            outcome: "busy".into(),
+            error: Some("another replica holds the update lock".into()),
+            indices: Vec::new(),
+        });
     }
-
-    let duration_ms = started.elapsed().as_millis() as u64;
-
-    let summary = indices
+    // txid_current is cluster-wide unique; timestamp also separates cluster resets.
+    let run_id: i64 = connection
+        .query_one("SELECT txid_current()", &[])
+        .await?
+        .get(0);
+    let staging: Vec<_> = INDEX_NAMES
         .iter()
-        .map(|r| {
-            format!(
-                "{}={}",
-                r.index,
-                r.document_count
-                    .map(|c| c.to_string())
-                    .unwrap_or_else(|| "failed".to_string())
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    if any_failed {
-        log::error!(
-            "Update run finished with failures: duration_ms={} {}",
-            duration_ms,
-            summary
-        );
-    } else {
-        log::info!(
-            "Update run finished: duration_ms={} {}",
-            duration_ms,
-            summary
-        );
+        .map(|name| format!("{name}_new_{started_at_unix}_{run_id}"))
+        .collect();
+    let remaining = timeout.saturating_sub(started.elapsed());
+    let result = tokio::time::timeout(
+        remaining,
+        build_generation(&mut connection, &meili_client, &staging),
+    )
+    .await;
+    let (outcome, error, indices) = match result {
+        Ok(Ok(indices)) => ("success", None, indices),
+        Ok(Err(err)) => ("failed", Some(err.to_string()), Vec::new()),
+        Err(_) => (
+            "timeout",
+            Some(format!("update run timed out after {timeout:?}")),
+            Vec::new(),
+        ),
+    };
+    // Keep the lock through cleanup, including after timeout. Failed HTTP/task
+    // waits can leave queued tasks; deletion follows them in Meili's task queue.
+    for uid in &staging {
+        if let Err(err) = delete_index_if_exists(&meili_client, uid).await {
+            log::error!("Failed to clean staging index {uid}: {err}");
+        }
     }
-
     Ok(RunResult {
         started_at_unix,
-        duration_ms,
+        duration_ms: started.elapsed().as_millis() as u64,
+        outcome: outcome.into(),
+        error,
         indices,
     })
 }
@@ -548,5 +537,26 @@ mod tests {
         assert!(check_publish_allowed(4, 10, 0.5, false).is_err());
         assert!(check_publish_allowed(5, 10, 0.5, false).is_ok());
         assert!(check_publish_allowed(1, 0, 0.5, false).is_ok());
+    }
+
+    #[test]
+    fn staging_cleanup_is_scoped_to_owned_names() {
+        for uid in [
+            "books_new",
+            "authors_new_123_456",
+            "sequences_new_1",
+            "genres_new_2",
+        ] {
+            assert!(is_staging_uid(uid), "{uid}");
+        }
+        for uid in [
+            "books",
+            "authors",
+            "books_news",
+            "other_new_1",
+            "my_books_new_1",
+        ] {
+            assert!(!is_staging_uid(uid), "{uid}");
+        }
     }
 }
