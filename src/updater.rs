@@ -415,13 +415,7 @@ async fn build_generation(
         update_model::<Genre>(&transaction, client, &staging[3]).await?,
     ];
     transaction.commit().await.map_err(boxed)?;
-    let swaps: Vec<_> = INDEX_NAMES
-        .iter()
-        .zip(staging)
-        .map(|(live, new)| SwapIndexes {
-            indexes: ((*live).to_string(), new.clone()),
-        })
-        .collect();
+    let swaps = generation_swaps(staging);
     let task = client.swap_indexes(&swaps).await.map_err(boxed)?;
     wait_for_meili_task(task, client, "swap_indexes (all indexes)").await?;
     Ok(INDEX_NAMES
@@ -434,6 +428,38 @@ async fn build_generation(
             error: None,
         })
         .collect())
+}
+
+fn generation_swaps(staging: &[String]) -> Vec<SwapIndexes> {
+    INDEX_NAMES
+        .iter()
+        .zip(staging)
+        .map(|(live, new)| SwapIndexes {
+            indexes: ((*live).to_string(), new.clone()),
+            // Preserve the existing swap operation, not an index rename.
+            rename: None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod swap_regression_tests {
+    use super::*;
+
+    #[test]
+    fn generation_swap_preserves_all_live_uids_without_rename() {
+        let staging: Vec<_> = INDEX_NAMES
+            .iter()
+            .map(|name| format!("{name}_new_123_456"))
+            .collect();
+        let payload = serde_json::to_value(generation_swaps(&staging)).unwrap();
+        let expected: Vec<_> = INDEX_NAMES
+            .iter()
+            .zip(&staging)
+            .map(|(live, new)| serde_json::json!({"indexes": [live, new]}))
+            .collect();
+        assert_eq!(payload, serde_json::json!(expected));
+    }
 }
 
 pub async fn update(
