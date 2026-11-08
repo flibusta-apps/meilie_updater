@@ -11,18 +11,27 @@ use axum::{
 };
 use deadpool_postgres::Pool;
 use futures::future::BoxFuture;
-use sentry::{types::Dsn, ClientOptions};
-use sentry_tracing::EventFilter;
+use sentry::ClientOptions;
 use std::{
     net::SocketAddr,
-    str::FromStr,
     sync::{Arc, Mutex},
     time::Duration,
 };
 use subtle::ConstantTimeEq;
 use tower_http::trace::{self, TraceLayer};
 use tracing::Level;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{
+    filter::LevelFilter, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer,
+};
+
+fn sentry_error_layer<S>() -> impl Layer<S>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    // Preserve the legacy ERROR-only event filter; do not turn lower levels
+    // into Sentry errors, breadcrumbs, or structured logs.
+    sentry_tracing::ErrorLayer::new().with_filter(LevelFilter::ERROR)
+}
 
 /// Function performing one update run; injectable so tests never touch real services.
 type Runner = Arc<
@@ -174,23 +183,17 @@ fn build_router(app_state: Arc<AppState>) -> Router {
 
 #[tokio::main]
 async fn main() {
-    let options = ClientOptions {
-        dsn: Some(Dsn::from_str(&config::CONFIG.sentry_dsn).unwrap()),
-        release: sentry::release_name!(),
-        ..Default::default()
-    };
+    let options = ClientOptions::new()
+        .dsn(&config::CONFIG.sentry_dsn)
+        .maybe_release(sentry::release_name!());
 
     let _guard = sentry::init(options);
-
-    let sentry_layer = sentry_tracing::layer().event_filter(|md| match md.level() {
-        &tracing::Level::ERROR => EventFilter::Event,
-        _ => EventFilter::Ignore,
-    });
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_target(false))
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .with(sentry_layer)
+        .with(sentry_tracing::SpanLayer::new().with_filter(LevelFilter::INFO))
+        .with(sentry_error_layer())
         .init();
 
     let pool = updater::get_postgres_pool()
@@ -224,6 +227,28 @@ mod tests {
     use axum::http::{HeaderValue, Request};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[test]
+    fn sentry_captures_only_errors_without_breadcrumbs() {
+        let events = sentry::test::with_captured_events(|| {
+            let subscriber = tracing_subscriber::registry()
+                .with(sentry_tracing::SpanLayer::new().with_filter(LevelFilter::INFO))
+                .with(sentry_error_layer());
+            tracing::subscriber::with_default(subscriber, || {
+                let _span = tracing::info_span!("request").entered();
+                tracing::info!("not a Sentry event");
+                tracing::warn!("not a breadcrumb");
+                tracing::error!("dependency migration regression");
+            });
+        });
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].level, sentry::Level::Error);
+        assert_eq!(
+            events[0].message.as_deref(),
+            Some("dependency migration regression")
+        );
+        assert!(events[0].breadcrumbs.is_empty());
+    }
 
     /// Populates all env vars `config::CONFIG` needs so it can be loaded in
     /// tests without touching real infrastructure. Safe/idempotent to call
